@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "515311387206",
+    "project_id": "clinicalmonitorapp",
+    "storage_bucket": "clinicalmonitorapp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:515311387206:android:f7253aa6119207d1bc8047",
+        "android_client_info": {
+          "package_name": "com.example.clinical_monitor"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDIXAZOYnQKVTAzHqlZ86q0ZdlxTLDVnXg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:515311387206:android:2d23c1447c01dd00bc8047",
+        "android_client_info": {
+          "package_name": "com.example.clinicalmonitor"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDIXAZOYnQKVTAzHqlZ86q0ZdlxTLDVnXg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
