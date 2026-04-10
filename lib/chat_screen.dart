@@ -53,39 +53,45 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    // ✅ SAFE DISPOSE: Prevents memory leaks and input lag
     _tabController.dispose();
     _msgController.dispose();
     super.dispose();
   }
 
-  // ================= ✅ FINAL CORRECTED MESSAGE LOGIC =================
+  // ================= ✅ MESSAGE LOGIC =================
 
   Future<void> _sendMessage(String chatType) async {
     if (_msgController.text.trim().isEmpty) return;
     final text = _msgController.text.trim();
     _msgController.clear();
 
-    // 🔥 CRITICAL FIX: Ensure targetUserId is NOT a placeholder.
-    // If students/faculty are in HOD Desk, they must pass the actual HOD UID.
     String ownerId;
     if (widget.role == "HOD") {
       ownerId = widget.targetUserId ?? widget.userId;
     } else {
-      // 🚨 Ensure you pass HOD's UID from the Dashboard navigation!
       ownerId = widget.targetUserId!;
     }
 
-    await FirebaseFirestore.instance.collection('chat').add({
-      "text": text,
-      "userId": widget.userId,
-      "userName": widget.userName,
-      "role": widget.role,
-      "type": chatType,
-      "targetUserId": ownerId,
-      "seenBy": [widget.userId],
-      "timestamp": FieldValue.serverTimestamp(),
-      "clientTimestamp": DateTime.now().millisecondsSinceEpoch,
-    });
+    try {
+      await FirebaseFirestore.instance.collection('chat').add({
+        "text": text,
+        "userId": widget.userId,
+        "userName": widget.userName,
+        "role": widget.role,
+        "type": chatType,
+        "targetUserId": ownerId,
+        "seenBy": [widget.userId],
+        "timestamp": FieldValue.serverTimestamp(),
+        "clientTimestamp": DateTime.now().millisecondsSinceEpoch,
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Message failed: $e")),
+        );
+      }
+    }
   }
 
   Future<void> _handleImage(String chatType) async {
@@ -131,7 +137,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  // ================= ✅ STABLE SEEN_BY UPDATER =================
+  // ================= ✅ STREAM & UNREAD STATUS =================
 
   Widget _buildChatList(String type) {
     Query chatQuery;
@@ -164,34 +170,23 @@ class _ChatScreenState extends State<ChatScreen>
     return StreamBuilder<QuerySnapshot>(
       stream: chatQuery.snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData)
+        if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
+        }
 
         final docs = snapshot.data!.docs;
 
+        // ✅ AUTO-CLEAR NOTIFICATION BADGE
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (docs.isNotEmpty) {
+          if (docs.isNotEmpty && mounted) {
             for (var doc in docs) {
               final data = doc.data() as Map<String, dynamic>;
               final seenBy = data['seenBy'] ?? [];
               final senderId = data['userId'];
-              final msgType = data['type'];
-              final targetUserId = data['targetUserId'];
 
               if (senderId == widget.userId) continue;
 
-              bool isRelevant = false;
-              if (msgType == 'group') {
-                isRelevant = true;
-              } else if (msgType == 'hod') {
-                if (widget.role == "HOD") {
-                  isRelevant = true;
-                } else {
-                  isRelevant = targetUserId == widget.userId;
-                }
-              }
-
-              if (isRelevant && !seenBy.contains(widget.userId)) {
+              if (!seenBy.contains(widget.userId)) {
                 FirebaseFirestore.instance
                     .collection('chat')
                     .doc(doc.id)
@@ -203,10 +198,11 @@ class _ChatScreenState extends State<ChatScreen>
           }
         });
 
-        if (docs.isEmpty)
+        if (docs.isEmpty) {
           return const Center(
               child: Text("Secure connection active",
                   style: TextStyle(color: Colors.grey)));
+        }
 
         return ListView.builder(
           reverse: true,

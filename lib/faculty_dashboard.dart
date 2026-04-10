@@ -50,10 +50,9 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
   @override
   void initState() {
     super.initState();
-    NotificationService().init();
+    // NotificationService init is now handled in main.dart for iOS handshake stability
   }
 
-  // ================= ✅ DYNAMIC HOD FETCH & NAVIGATION =================
   Future<void> _getHodAndNavigate() async {
     try {
       final hodQuery = await FirebaseFirestore.instance
@@ -95,13 +94,10 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
     }
   }
 
-  // ================= ✅ 1 MONTH PDF EXPORT LOGIC =================
   Future<void> _exportMonthlyFacultyPDF() async {
     setState(() => isExporting = true);
     try {
       final pdf = pw.Document();
-
-      // Calculate 1 month range (30 days back from selected date)
       DateTime endDate = selectedDate;
       DateTime startDate = endDate.subtract(const Duration(days: 30));
 
@@ -123,13 +119,21 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
       }
 
       List<List<String>> rows = [];
+      int serialNo = 1;
+
       for (var doc in snapshot.docs) {
         final data = doc.data();
         final workEntries = data['workEntries'] as List? ?? [];
         final dateLabel = data['date'] ?? '-';
+        final String time = data['timestamp'] != null
+            ? DateFormat('hh:mm a')
+                .format((data['timestamp'] as Timestamp).toDate())
+            : '-';
+
         for (var entry in workEntries) {
           rows.add([
-            dateLabel,
+            "${serialNo++}",
+            "$dateLabel\n$time",
             data['timeSlot'] ?? '-',
             entry['category'] ?? '-',
             entry['details'] ?? '-'
@@ -138,10 +142,10 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
       }
 
       pdf.addPage(pw.MultiPage(
-          pageFormat: PdfPageFormat.a4.landscape, // ✅ FIXED
+          pageFormat: PdfPageFormat.a4.landscape,
           margin: const pw.EdgeInsets.all(32),
           header: (context) => pw.Column(children: [
-                pw.Text("FACULTY MONTHLY PERFORMANCE REPORT",
+                pw.Text("FACULTY PERFORMANCE LOG REPORT",
                     style: pw.TextStyle(
                         fontWeight: pw.FontWeight.bold,
                         fontSize: 18,
@@ -158,7 +162,13 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
           build: (context) => [
                 pw.SizedBox(height: 10),
                 pw.TableHelper.fromTextArray(
-                  headers: ["Date", "Time Slot", "Category", "Work Details"],
+                  headers: [
+                    "S.No",
+                    "Date/Time",
+                    "Time Slot",
+                    "Category",
+                    "Work Details"
+                  ],
                   data: rows,
                   headerStyle: pw.TextStyle(
                       color: PdfColors.white,
@@ -168,25 +178,28 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
                       const pw.BoxDecoration(color: PdfColors.teal900),
                   cellStyle: const pw.TextStyle(fontSize: 9),
                   columnWidths: {
-                    0: const pw.FixedColumnWidth(80),
-                    1: const pw.FixedColumnWidth(100),
+                    0: const pw.FixedColumnWidth(35),
+                    1: const pw.FixedColumnWidth(85),
                     2: const pw.FixedColumnWidth(100),
-                    3: const pw.FixedColumnWidth(300),
+                    3: const pw.FixedColumnWidth(100),
+                    4: const pw.FixedColumnWidth(280),
                   },
                   cellPadding: const pw.EdgeInsets.all(6),
                   border:
                       pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
                 ),
               ],
-          footer: (context) => pw.Align(
+          footer: (context) => pw.Container(
                 alignment: pw.Alignment.centerRight,
-                child: pw.Text("Page ${context.pageNumber}",
-                    style: const pw.TextStyle(fontSize: 8)),
+                padding: const pw.EdgeInsets.only(top: 20),
+                child: pw.Text(
+                    "Page ${context.pageNumber} | Clinical Monitoring App",
+                    style: const pw.TextStyle(
+                        fontSize: 8, color: PdfColors.grey600)),
               )));
 
       await Printing.layoutPdf(
-          onLayout: (format) async => pdf.save(),
-          name: 'Faculty_Monthly_Report');
+          onLayout: (format) async => pdf.save(), name: 'Faculty_Monthly_Log');
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)
@@ -196,7 +209,6 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
     }
   }
 
-  // ================= CHAT ICON WITH COUNT BADGE =================
   Widget _buildChatIcon() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('chat').snapshots(),
@@ -246,184 +258,6 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
     );
   }
 
-  // ================= REMINDER LOGIC =================
-  void _showAddReminderDialog() {
-    final TextEditingController titleController = TextEditingController();
-    final TextEditingController descController = TextEditingController();
-    TimeOfDay? selectedTime;
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text("New Faculty Task",
-              style: TextStyle(
-                  color: AppColors.accentTeal, fontWeight: FontWeight.bold)),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(
-                  controller: titleController,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(
-                      labelText: "Task Title*",
-                      hintText: "e.g., NAAC Meeting")),
-              const SizedBox(height: 10),
-              TextField(
-                  controller: descController,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(
-                      labelText: "Description (Optional)")),
-              const SizedBox(height: 15),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading:
-                    const Icon(Icons.access_time, color: AppColors.accentTeal),
-                title: Text(selectedTime == null
-                    ? "Pick Schedule Time"
-                    : "Scheduled: ${selectedTime!.format(context)}"),
-                onTap: () async {
-                  final TimeOfDay? picked = await showTimePicker(
-                      context: context, initialTime: TimeOfDay.now());
-                  if (picked != null)
-                    setDialogState(() => selectedTime = picked);
-                },
-              ),
-            ]),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Cancel")),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accentTeal),
-              onPressed: () async {
-                if (titleController.text.trim().isEmpty) return;
-                await FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(widget.userId)
-                    .collection('reminders')
-                    .add({
-                  'title': titleController.text.trim(),
-                  'description': descController.text.trim(),
-                  'status': 'pending',
-                  'date': formattedDate,
-                  'time': selectedTime != null
-                      ? selectedTime!.format(context)
-                      : "No Time",
-                  'createdAt': FieldValue.serverTimestamp(),
-                });
-                if (mounted) Navigator.pop(context);
-              },
-              child: const Text("Save Task",
-                  style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReminderSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          child:
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text("MY REMINDERS",
-                style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.1,
-                    color: Colors.black54)),
-            IconButton(
-                onPressed: _showAddReminderDialog,
-                icon: const Icon(Icons.add_circle,
-                    color: AppColors.accentTeal, size: 28)),
-          ]),
-        ),
-        StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('users')
-              .doc(widget.userId)
-              .collection('reminders')
-              .where('date', isEqualTo: formattedDate)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-              return const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Center(
-                      child: Text("No reminders for this date",
-                          style: TextStyle(color: Colors.grey))));
-            }
-            final docs = snapshot.data!.docs.toList();
-            return Column(children: [
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                itemCount: docs.length,
-                itemBuilder: (context, index) {
-                  var doc = docs[index];
-                  var data = doc.data() as Map<String, dynamic>;
-                  bool isDone = data['status'] == 'completed';
-                  return Card(
-                    elevation: 0.5,
-                    color: isDone ? Colors.grey[50] : Colors.white,
-                    margin: const EdgeInsets.only(bottom: 8),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(
-                            color: isDone
-                                ? Colors.transparent
-                                : Colors.teal.shade50)),
-                    child: ListTile(
-                      leading: Checkbox(
-                          value: isDone,
-                          activeColor: AppColors.accentTeal,
-                          onChanged: (val) => doc.reference.update(
-                              {'status': val! ? 'completed' : 'pending'})),
-                      title: Text(data['title'],
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              decoration:
-                                  isDone ? TextDecoration.lineThrough : null,
-                              color:
-                                  isDone ? Colors.grey : AppColors.textDark)),
-                      subtitle: Text("${data['time']} - ${data['description']}",
-                          style: const TextStyle(fontSize: 11)),
-                      trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline,
-                              color: Colors.redAccent, size: 20),
-                          onPressed: () => doc.reference.delete()),
-                    ),
-                  );
-                },
-              ),
-            ]);
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBadge(String label, Color color) {
-    return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(20)),
-        child: Text(label,
-            style: TextStyle(
-                fontSize: 11, color: color, fontWeight: FontWeight.bold)));
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -452,46 +286,7 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(30),
-                      bottomRight: Radius.circular(30))),
-              child: InkWell(
-                onTap: () async {
-                  final d = await showDatePicker(
-                      context: context,
-                      initialDate: selectedDate,
-                      firstDate: DateTime(2024),
-                      lastDate: DateTime(2030),
-                      builder: (context, child) => Theme(
-                          data: Theme.of(context).copyWith(
-                              colorScheme: const ColorScheme.light(
-                                  primary: AppColors.accentTeal)),
-                          child: child!));
-                  if (d != null) setState(() => selectedDate = d);
-                },
-                child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(15)),
-                    child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                              DateFormat('EEEE, dd MMM yyyy')
-                                  .format(selectedDate),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                          const Icon(Icons.calendar_month,
-                              color: AppColors.accentTeal)
-                        ])),
-              ),
-            ),
+            _buildHeaderDatePicker(),
             ListView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -503,6 +298,43 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
             const SizedBox(height: 40),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderDatePicker() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: const BoxDecoration(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(30),
+              bottomRight: Radius.circular(30))),
+      child: InkWell(
+        onTap: () async {
+          final d = await showDatePicker(
+              context: context,
+              initialDate: selectedDate,
+              firstDate: DateTime(2024),
+              lastDate: DateTime(2030),
+              builder: (context, child) => Theme(
+                  data: Theme.of(context).copyWith(
+                      colorScheme: const ColorScheme.light(
+                          primary: AppColors.accentTeal)),
+                  child: child!));
+          if (d != null) setState(() => selectedDate = d);
+        },
+        child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+                color: Colors.white, borderRadius: BorderRadius.circular(15)),
+            child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(DateFormat('EEEE, dd MMM yyyy').format(selectedDate),
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const Icon(Icons.calendar_month, color: AppColors.accentTeal)
+                ])),
       ),
     );
   }
@@ -545,8 +377,126 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
       },
     );
   }
+
+  // Reminder section remains same but ensured it uses the centralized formattedDate
+  void _showAddReminderDialog() {
+    final TextEditingController titleController = TextEditingController();
+    final TextEditingController descController = TextEditingController();
+    TimeOfDay? selectedTime;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text("New Faculty Task",
+              style: TextStyle(
+                  color: AppColors.accentTeal, fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                  controller: titleController,
+                  decoration: const InputDecoration(labelText: "Task Title*")),
+              TextField(
+                  controller: descController,
+                  decoration: const InputDecoration(labelText: "Description")),
+              ListTile(
+                title: Text(selectedTime == null
+                    ? "Pick Time"
+                    : "Time: ${selectedTime!.format(context)}"),
+                onTap: () async {
+                  final t = await showTimePicker(
+                      context: context, initialTime: TimeOfDay.now());
+                  if (t != null) setDialogState(() => selectedTime = t);
+                },
+              )
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel")),
+            ElevatedButton(
+                onPressed: () async {
+                  if (titleController.text.isEmpty) return;
+                  await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(widget.userId)
+                      .collection('reminders')
+                      .add({
+                    'title': titleController.text,
+                    'description': descController.text,
+                    'status': 'pending',
+                    'date': formattedDate,
+                    'time': selectedTime?.format(context) ?? "No Time",
+                  });
+                  Navigator.pop(context);
+                },
+                child: const Text("Save"))
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReminderSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child:
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text("MY REMINDERS",
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black54)),
+            IconButton(
+                onPressed: _showAddReminderDialog,
+                icon: const Icon(Icons.add_circle,
+                    color: AppColors.accentTeal, size: 28)),
+          ]),
+        ),
+        StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(widget.userId)
+              .collection('reminders')
+              .where('date', isEqualTo: formattedDate)
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData || snapshot.data!.docs.isEmpty)
+              return const Center(
+                  child: Text("No reminders for today",
+                      style: TextStyle(color: Colors.grey)));
+            return ListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              children: snapshot.data!.docs.map((doc) {
+                var data = doc.data() as Map<String, dynamic>;
+                bool isDone = data['status'] == 'completed';
+                return CheckboxListTile(
+                  value: isDone,
+                  title: Text(data['title'],
+                      style: TextStyle(
+                          decoration:
+                              isDone ? TextDecoration.lineThrough : null)),
+                  onChanged: (val) => doc.reference
+                      .update({'status': val! ? 'completed' : 'pending'}),
+                );
+              }).toList(),
+            );
+          },
+        )
+      ],
+    );
+  }
 }
 
+// ================= FACULTY ENTRY SCREEN (DISPOSE READY) =================
 class FacultyEntryScreen extends StatefulWidget {
   final String userId, userName, slot, date;
   const FacultyEntryScreen(
@@ -577,6 +527,15 @@ class _FacultyEntryScreenState extends State<FacultyEntryScreen> {
     _addEntry();
   }
 
+  @override
+  void dispose() {
+    // Memory Safety: Dispose all controllers when leaving the screen
+    for (var entry in _entries) {
+      (entry['controller'] as TextEditingController).dispose();
+    }
+    super.dispose();
+  }
+
   void _addEntry() {
     setState(() => _entries
         .add({"category": null, "controller": TextEditingController()}));
@@ -588,9 +547,11 @@ class _FacultyEntryScreenState extends State<FacultyEntryScreen> {
       List workData = _entries
           .map((e) => {
                 "category": e['category'],
-                "details": e['controller'].text.trim()
+                "details":
+                    (e['controller'] as TextEditingController).text.trim()
               })
           .toList();
+
       await FirebaseFirestore.instance.collection('department_entries').add({
         "userId": widget.userId,
         "userName": widget.userName,
@@ -603,8 +564,9 @@ class _FacultyEntryScreenState extends State<FacultyEntryScreen> {
       });
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("Error: $e")));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -615,9 +577,7 @@ class _FacultyEntryScreenState extends State<FacultyEntryScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-          title: Text("Work Log: ${widget.slot.split(' ')[0]}",
-              style: const TextStyle(
-                  color: Colors.black, fontWeight: FontWeight.bold)),
+          title: Text("Work Log: ${widget.slot}"),
           backgroundColor: AppColors.primary,
           elevation: 0,
           leading: IconButton(
@@ -626,95 +586,69 @@ class _FacultyEntryScreenState extends State<FacultyEntryScreen> {
       body: Column(
         children: [
           Expanded(
-              child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(children: [
-                    ..._entries
-                        .asMap()
-                        .entries
-                        .map((e) => _buildWorkCard(e.key, e.value)),
-                    OutlinedButton.icon(
-                        onPressed: _addEntry,
-                        icon: const Icon(Icons.add_circle_outline),
-                        label: const Text("Add Another Item"),
-                        style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.accentTeal))
-                  ]))),
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _entries.length,
+              itemBuilder: (context, index) =>
+                  _buildWorkCard(index, _entries[index]),
+            ),
+          ),
           _buildSubmitBar(),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addEntry,
+        backgroundColor: AppColors.accentTeal,
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
 
   Widget _buildWorkCard(int index, Map<String, dynamic> data) {
     return Card(
-      elevation: 0,
       margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: Colors.teal.shade50)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(children: [
-            Row(children: [
-              CircleAvatar(
-                  backgroundColor: AppColors.accent,
-                  radius: 12,
-                  child: Text("${index + 1}",
-                      style:
-                          const TextStyle(fontSize: 12, color: Colors.white))),
-              const SizedBox(width: 10),
-              const Text("Work Detail",
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const Spacer(),
-              if (_entries.length > 1)
-                IconButton(
-                    icon: const Icon(Icons.remove_circle_outline,
-                        color: Colors.redAccent),
-                    onPressed: () => setState(() => _entries.removeAt(index)))
-            ]),
-            const Divider(height: 25),
-            DropdownButtonFormField<String>(
-                decoration: const InputDecoration(
-                    labelText: "Category",
-                    prefixIcon: Icon(Icons.category_outlined,
-                        color: AppColors.accentTeal)),
-                items: categories
-                    .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                    .toList(),
-                onChanged: (val) => data['category'] = val),
-            const SizedBox(height: 12),
-            TextField(
-                controller: data['controller'],
-                maxLines: 3,
-                decoration: InputDecoration(
-                    labelText: "Details",
-                    prefixIcon: const Icon(Icons.edit_note_outlined,
-                        color: AppColors.accentTeal),
-                    filled: true,
-                    fillColor: AppColors.background.withOpacity(0.5),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(15),
-                        borderSide: BorderSide.none))),
-          ])),
+        padding: const EdgeInsets.all(16),
+        child: Column(children: [
+          Row(children: [
+            Text("Entry #${index + 1}",
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            if (_entries.length > 1)
+              IconButton(
+                  icon: const Icon(Icons.remove_circle, color: Colors.red),
+                  onPressed: () => setState(() => _entries.removeAt(index))),
+          ]),
+          DropdownButtonFormField<String>(
+              decoration: const InputDecoration(labelText: "Category"),
+              items: categories
+                  .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                  .toList(),
+              onChanged: (val) => data['category'] = val),
+          const SizedBox(height: 12),
+          TextField(
+              controller: data['controller'],
+              maxLines: 3,
+              decoration: const InputDecoration(
+                  labelText: "Details",
+                  filled: true,
+                  border: OutlineInputBorder())),
+        ]),
+      ),
     );
   }
 
   Widget _buildSubmitBar() {
     return Container(
         padding: const EdgeInsets.all(20),
-        decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
         child: SizedBox(
             width: double.infinity,
             height: 55,
             child: ElevatedButton(
                 onPressed: isLoading ? null : _submit,
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accentTeal,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15))),
+                    backgroundColor: AppColors.accentTeal),
                 child: isLoading
                     ? const CircularProgressIndicator(color: Colors.white)
                     : const Text("SUBMIT WORK LOG",

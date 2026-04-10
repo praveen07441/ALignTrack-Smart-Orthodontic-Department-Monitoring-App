@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # clinical_monitor
 
 A new Flutter project.
@@ -15,6 +14,3 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
-=======
-# ALignTrack-Smart-Orthodontic-Department-Monitoring-App
->>>>>>> cbbfdfdbd5180ab97c699beb8b116a7d7d621fc6
