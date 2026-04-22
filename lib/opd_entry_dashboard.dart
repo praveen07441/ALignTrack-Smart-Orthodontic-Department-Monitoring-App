@@ -63,7 +63,36 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
         }));
   }
 
-  // ================= ✅ DYNAMIC HOD FETCH & NAVIGATION =================
+  // ================= ✅ SMART CHAT & BADGE RESET LOGIC =================
+
+  Future<void> _markMessagesAsSeen() async {
+    try {
+      final snapshot =
+          await FirebaseFirestore.instance.collection('chat').get();
+      final batch = FirebaseFirestore.instance.batch();
+      bool hasUpdates = false;
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final seenBy = List.from(data['seenBy'] ?? []);
+
+        // Logic check: Is this a group message or a private message for THIS OPD User?
+        bool isRelevant = data['type'] == 'group' ||
+            (data['type'] == 'hod' && data['targetUserId'] == widget.userId);
+
+        if (isRelevant && !seenBy.contains(widget.userId)) {
+          batch.update(doc.reference, {
+            'seenBy': FieldValue.arrayUnion([widget.userId])
+          });
+          hasUpdates = true;
+        }
+      }
+      if (hasUpdates) await batch.commit();
+    } catch (e) {
+      debugPrint("Badge reset error: $e");
+    }
+  }
+
   Future<void> _getHodAndNavigate() async {
     try {
       final hodQuery = await FirebaseFirestore.instance
@@ -103,6 +132,56 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
         );
       }
     }
+  }
+
+  Widget _buildChatIcon() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('chat').snapshots(),
+      builder: (context, snapshot) {
+        int unreadCount = 0;
+        if (snapshot.hasData) {
+          for (var doc in snapshot.data!.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            final seenBy = data['seenBy'] ?? [];
+            if (data['userId'] == widget.userId) continue;
+
+            bool isRelevant = data['type'] == 'group' ||
+                (data['type'] == 'hod' &&
+                    data['targetUserId'] == widget.userId);
+
+            if (isRelevant && !seenBy.contains(widget.userId)) {
+              unreadCount++;
+            }
+          }
+        }
+        return Stack(alignment: Alignment.center, children: [
+          IconButton(
+              icon: const Icon(Icons.chat_bubble_outline,
+                  color: Colors.black, size: 26),
+              onPressed: () async {
+                await _markMessagesAsSeen(); // ✅ Reset badge locally
+                _getHodAndNavigate(); // ✅ Navigate to HOD Desk
+              }),
+          if (unreadCount > 0)
+            Positioned(
+              right: 6,
+              top: 6,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: const BoxDecoration(
+                    color: Colors.red, shape: BoxShape.circle),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                child: Text(unreadCount > 99 ? '99+' : '$unreadCount',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center),
+              ),
+            ),
+        ]);
+      },
+    );
   }
 
   // ================= ✅ PREMIUM 1 MONTH PDF EXPORT =================
@@ -212,52 +291,7 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
     }
   }
 
-  // ================= ✅ SMART CHAT ICON =================
-  Widget _buildChatIcon() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('chat').snapshots(),
-      builder: (context, snapshot) {
-        int unreadCount = 0;
-        if (snapshot.hasData) {
-          for (var doc in snapshot.data!.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final seenBy = data['seenBy'] ?? [];
-            if (data['userId'] == widget.userId) continue;
-            bool isRelevant = data['type'] == 'group' ||
-                (data['type'] == 'hod' &&
-                    data['targetUserId'] == widget.userId);
-            if (isRelevant && !seenBy.contains(widget.userId)) unreadCount++;
-          }
-        }
-        return Stack(alignment: Alignment.center, children: [
-          IconButton(
-              icon: const Icon(Icons.chat_bubble_outline,
-                  color: Colors.black, size: 26),
-              onPressed: _getHodAndNavigate),
-          if (unreadCount > 0)
-            Positioned(
-              right: 6,
-              top: 6,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: const BoxDecoration(
-                    color: Colors.red, shape: BoxShape.circle),
-                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                child: Text(unreadCount > 99 ? '99+' : '$unreadCount',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center),
-              ),
-            ),
-        ]);
-      },
-    );
-  }
-
   Future<void> _validateAndSubmit() async {
-    // Validation check
     for (int i = 0; i < _controllers.length; i++) {
       if (_controllers[i].values.any((c) => c.text.trim().isEmpty)) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -313,12 +347,18 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
             style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         backgroundColor: AppColors.primary,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.logout, color: Colors.black),
+          onPressed: () =>
+              Navigator.of(context).popUntil((route) => route.isFirst),
+        ),
         actions: [
           isExporting
               ? const SizedBox(
                   width: 40,
-                  child:
-                      Center(child: CircularProgressIndicator(strokeWidth: 2)))
+                  child: Center(
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.black)))
               : IconButton(
                   icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
                   onPressed: _exportMonthlyOPDPDF),

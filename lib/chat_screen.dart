@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ChatColors {
   static const Color primaryTeal = Color(0xFF075E54);
@@ -53,24 +55,38 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
-    // ✅ SAFE DISPOSE: Prevents memory leaks and input lag
     _tabController.dispose();
     _msgController.dispose();
     super.dispose();
   }
 
-  // ================= ✅ MESSAGE LOGIC =================
+  // ================= ✅ HELPER: LOADING & ERROR =================
+
+  void _showLoading() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+          child: CircularProgressIndicator(color: ChatColors.primaryTeal)),
+    );
+  }
+
+  void _showError(String msg) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  // ================= ✅ MESSAGE SENDING =================
 
   Future<void> _sendMessage(String chatType) async {
     if (_msgController.text.trim().isEmpty) return;
     final text = _msgController.text.trim();
-    _msgController.clear();
 
-    String ownerId;
-    if (widget.role == "HOD") {
-      ownerId = widget.targetUserId ?? widget.userId;
-    } else {
-      ownerId = widget.targetUserId!;
+    String? targetId = chatType == "hod" ? widget.targetUserId : null;
+    if (chatType == "hod" && targetId == null) {
+      _showError("Target user not identified.");
+      return;
     }
 
     try {
@@ -80,40 +96,44 @@ class _ChatScreenState extends State<ChatScreen>
         "userName": widget.userName,
         "role": widget.role,
         "type": chatType,
-        "targetUserId": ownerId,
+        "targetUserId": targetId,
         "seenBy": [widget.userId],
+        "isDeleted": false,
         "timestamp": FieldValue.serverTimestamp(),
         "clientTimestamp": DateTime.now().millisecondsSinceEpoch,
       });
+      _msgController.clear();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Message failed: $e")),
-        );
-      }
+      _showError("Failed to send: $e");
     }
   }
 
+  // ================= ✅ IMAGE HANDLING (FIXED PATH & UPLOAD) =================
+
   Future<void> _handleImage(String chatType) async {
     try {
-      final XFile? image = await _picker.pickImage(
+      if (chatType == "hod" && widget.targetUserId == null) return;
+
+      final XFile? pickedFile = await _picker.pickImage(
           source: ImageSource.gallery, imageQuality: 70);
-      if (image == null) return;
+      if (pickedFile == null) return;
 
       if (!mounted) return;
-      showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (_) => const Center(child: CircularProgressIndicator()));
+      _showLoading();
 
-      final fileName = 'chat/${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final ref = FirebaseStorage.instance.ref().child(fileName);
-      await ref.putFile(File(image.path));
-      final url = await ref.getDownloadURL();
+      final bytes = await pickedFile.readAsBytes();
+      if (bytes.isEmpty) {
+        if (mounted) Navigator.pop(context);
+        _showError("Could not read image.");
+        return;
+      }
 
-      String ownerId = (widget.role == "HOD")
-          ? (widget.targetUserId ?? widget.userId)
-          : widget.targetUserId!;
+      final String fileName =
+          'chat_media/IMG_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final Reference ref = FirebaseStorage.instance.ref().child(fileName);
+
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+      final String url = await ref.getDownloadURL();
 
       await FirebaseFirestore.instance.collection('chat').add({
         "imageUrl": url,
@@ -121,8 +141,9 @@ class _ChatScreenState extends State<ChatScreen>
         "userName": widget.userName,
         "role": widget.role,
         "type": chatType,
-        "targetUserId": ownerId,
+        "targetUserId": chatType == "hod" ? widget.targetUserId : null,
         "seenBy": [widget.userId],
+        "isDeleted": false,
         "timestamp": FieldValue.serverTimestamp(),
         "clientTimestamp": DateTime.now().millisecondsSinceEpoch,
       });
@@ -131,78 +152,131 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text("Upload failed: $e")));
+        _showError("Upload failed: $e");
       }
     }
   }
 
-  // ================= ✅ STREAM & UNREAD STATUS =================
+  // ================= ✅ FILE HANDLING (FIXED PATH & UPLOAD) =================
+
+  Future<void> _handleFile(String chatType) async {
+    try {
+      if (chatType == "hod" && widget.targetUserId == null) return;
+
+      final result = await FilePicker.platform
+          .pickFiles(type: FileType.any, allowMultiple: false, withData: true);
+      if (result == null) return;
+
+      final PlatformFile pickedFile = result.files.single;
+      final fileBytes = pickedFile.bytes;
+      final filePath = pickedFile.path;
+
+      if (fileBytes == null && filePath == null) {
+        _showError("Could not read file.");
+        return;
+      }
+
+      if (!mounted) return;
+      _showLoading();
+
+      final String storagePath =
+          'chat_media/FILE_${DateTime.now().millisecondsSinceEpoch}_${pickedFile.name}';
+      final Reference ref = FirebaseStorage.instance.ref().child(storagePath);
+
+      if (fileBytes != null) {
+        await ref.putData(fileBytes);
+      } else {
+        await ref.putFile(File(filePath!));
+      }
+
+      final String url = await ref.getDownloadURL();
+
+      await FirebaseFirestore.instance.collection('chat').add({
+        "fileUrl": url,
+        "fileName": pickedFile.name,
+        "userId": widget.userId,
+        "userName": widget.userName,
+        "role": widget.role,
+        "type": chatType,
+        "targetUserId": chatType == "hod" ? widget.targetUserId : null,
+        "seenBy": [widget.userId],
+        "isDeleted": false,
+        "timestamp": FieldValue.serverTimestamp(),
+        "clientTimestamp": DateTime.now().millisecondsSinceEpoch,
+      });
+
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showError("File failed: $e");
+      }
+    }
+  }
+
+  // ================= ✅ DELETE LOGIC =================
+
+  void _showDeleteDialog(String docId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Delete message?"),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel")),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await FirebaseFirestore.instance
+                  .collection('chat')
+                  .doc(docId)
+                  .update({
+                "text": "Deleted",
+                "imageUrl": null,
+                "fileUrl": null,
+                "isDeleted": true,
+              });
+            },
+            child: const Text("Delete", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ================= ✅ CHAT VIEW (FIXED: Simple Query + Dart Filter) =================
 
   Widget _buildChatList(String type) {
-    Query chatQuery;
-    if (type == "hod") {
-      if (widget.role == "HOD" && _isPrivateChat) {
-        chatQuery = FirebaseFirestore.instance
-            .collection('chat')
-            .where('type', isEqualTo: 'hod')
-            .where('targetUserId', isEqualTo: widget.targetUserId)
-            .orderBy('clientTimestamp', descending: true);
-      } else if (widget.role == "HOD") {
-        chatQuery = FirebaseFirestore.instance
-            .collection('chat')
-            .where('type', isEqualTo: 'hod')
-            .orderBy('clientTimestamp', descending: true);
-      } else {
-        chatQuery = FirebaseFirestore.instance
-            .collection('chat')
-            .where('type', isEqualTo: 'hod')
-            .where('targetUserId', isEqualTo: widget.userId)
-            .orderBy('clientTimestamp', descending: true);
-      }
-    } else {
-      chatQuery = FirebaseFirestore.instance
-          .collection('chat')
-          .where('type', isEqualTo: 'group')
-          .orderBy('clientTimestamp', descending: true);
-    }
+    // 🔥 FIXED: Remove complex Filter.or to prevent "Exactly one operator" crash
+    Query chatQuery = FirebaseFirestore.instance
+        .collection('chat')
+        .where('type', isEqualTo: type)
+        .orderBy('clientTimestamp', descending: true);
 
     return StreamBuilder<QuerySnapshot>(
       stream: chatQuery.snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (!snapshot.hasData)
           return const Center(child: CircularProgressIndicator());
-        }
 
-        final docs = snapshot.data!.docs;
-
-        // ✅ AUTO-CLEAR NOTIFICATION BADGE
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (docs.isNotEmpty && mounted) {
-            for (var doc in docs) {
-              final data = doc.data() as Map<String, dynamic>;
-              final seenBy = data['seenBy'] ?? [];
-              final senderId = data['userId'];
-
-              if (senderId == widget.userId) continue;
-
-              if (!seenBy.contains(widget.userId)) {
-                FirebaseFirestore.instance
-                    .collection('chat')
-                    .doc(doc.id)
-                    .update({
-                  "seenBy": FieldValue.arrayUnion([widget.userId])
-                });
-              }
-            }
+        // 🔥 FIXED: Manual filtering in Dart to handle bidirectional HOD chat
+        final docs = snapshot.data!.docs.where((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          if (type == "hod") {
+            final String otherId = widget.targetUserId ?? "";
+            return (data['userId'] == widget.userId &&
+                    data['targetUserId'] == otherId) ||
+                (data['userId'] == otherId &&
+                    data['targetUserId'] == widget.userId);
           }
-        });
+          return true; // Return all for group chat
+        }).toList();
 
-        if (docs.isEmpty) {
+        if (docs.isEmpty)
           return const Center(
-              child: Text("Secure connection active",
+              child: Text("No messages yet",
                   style: TextStyle(color: Colors.grey)));
-        }
 
         return ListView.builder(
           reverse: true,
@@ -211,75 +285,111 @@ class _ChatScreenState extends State<ChatScreen>
           itemBuilder: (context, i) {
             final data = docs[i].data() as Map<String, dynamic>;
             final isMe = data['userId'] == widget.userId;
-            return _buildBubble(data, isMe);
+            return _buildBubble(data, isMe, docs[i].id);
           },
         );
       },
     );
   }
 
-  // ================= UI BUILDERS =================
+  Widget _buildBubble(Map<String, dynamic> data, bool isMe, String docId) {
+    final timestampRaw = data['timestamp'] != null
+        ? (data['timestamp'] as Timestamp).toDate()
+        : DateTime.fromMillisecondsSinceEpoch(data['clientTimestamp']);
+    final timestamp = DateFormat('hh:mm a').format(timestampRaw);
+    final bool isDeleted = data['isDeleted'] ?? false;
 
-  Widget _buildBubble(Map<String, dynamic> data, bool isMe) {
-    final timestamp = data['timestamp'] != null
-        ? DateFormat('hh:mm a')
-            .format((data['timestamp'] as Timestamp).toDate())
-        : DateFormat('hh:mm a').format(
-            DateTime.fromMillisecondsSinceEpoch(data['clientTimestamp']));
-
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        constraints:
-            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        decoration: BoxDecoration(
-          color: isMe ? ChatColors.myBubble : ChatColors.otherBubble,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: isMe ? const Radius.circular(16) : Radius.zero,
-            bottomRight: isMe ? Radius.zero : const Radius.circular(16),
+    return GestureDetector(
+      onLongPress: () {
+        if (isMe && !isDeleted) _showDeleteDialog(docId);
+      },
+      child: Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.75),
+          decoration: BoxDecoration(
+            color: isMe ? ChatColors.myBubble : ChatColors.otherBubble,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2))
+            ],
           ),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 4,
-                offset: const Offset(0, 2))
-          ],
-        ),
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!isMe)
-              Text("${data['userName']} • ${data['role']}",
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 11,
-                      color: ChatColors.primaryTeal)),
-            if (data['imageUrl'] != null)
-              Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(data['imageUrl']))),
-            if (data['text'] != null)
-              Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(data['text'],
-                      style: const TextStyle(
-                          fontSize: 15, color: Colors.black87))),
-            Align(
-                alignment: Alignment.bottomRight,
-                child: Text(timestamp,
-                    style:
-                        const TextStyle(fontSize: 10, color: Colors.black38))),
-          ],
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!isMe)
+                Text("${data['userName']} • ${data['role']}",
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 10,
+                        color: ChatColors.primaryTeal)),
+              if (isDeleted)
+                const Text("Deleted",
+                    style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.black38,
+                        fontStyle: FontStyle.italic))
+              else ...[
+                if (data['imageUrl'] != null)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(data['imageUrl']))),
+                if (data['fileUrl'] != null)
+                  InkWell(
+                    onTap: () async {
+                      final Uri url = Uri.parse(data['fileUrl']);
+                      if (await canLaunchUrl(url))
+                        await launchUrl(url,
+                            mode: LaunchMode.externalApplication);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(8)),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.insert_drive_file,
+                              size: 20, color: ChatColors.primaryTeal),
+                          const SizedBox(width: 8),
+                          Flexible(
+                              child: Text(data['fileName'] ?? "File",
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      decoration: TextDecoration.underline,
+                                      color: Colors.blue))),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (data['text'] != null)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(data['text'],
+                          style: const TextStyle(fontSize: 14))),
+              ],
+              Align(
+                  alignment: Alignment.bottomRight,
+                  child: Text(timestamp,
+                      style:
+                          const TextStyle(fontSize: 9, color: Colors.black38))),
+            ],
+          ),
         ),
       ),
     );
   }
+
+  // ================= ✅ INPUT BAR =================
 
   Widget _buildInputBar() {
     return AnimatedBuilder(
@@ -288,65 +398,48 @@ class _ChatScreenState extends State<ChatScreen>
         final type = _tabController.index == 0 ? "group" : "hod";
         return Container(
           padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom + 12,
-              left: 8,
-              right: 8,
-              top: 8),
-          decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.9),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 6,
-                    offset: const Offset(0, -2))
-              ]),
+              bottom: MediaQuery.of(context).viewInsets.bottom + 10,
+              left: 10,
+              right: 10,
+              top: 10),
+          decoration: BoxDecoration(color: Colors.white, boxShadow: [
+            BoxShadow(
+                color: Colors.black12,
+                blurRadius: 4,
+                offset: const Offset(0, -2))
+          ]),
           child: Row(
             children: [
+              IconButton(
+                  icon: const Icon(Icons.attach_file,
+                      color: ChatColors.primaryTeal),
+                  onPressed: () => _handleFile(type)),
+              IconButton(
+                  icon: const Icon(Icons.add_photo_alternate,
+                      color: ChatColors.primaryTeal),
+                  onPressed: () => _handleImage(type)),
               Expanded(
                 child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(color: Colors.grey.shade200)),
-                  child: Row(
-                    children: [
-                      IconButton(
-                          icon: const Icon(Icons.add_photo_alternate_rounded,
-                              color: ChatColors.primaryTeal),
-                          onPressed: () => _handleImage(type)),
-                      Expanded(
-                        child: TextField(
-                          controller: _msgController,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _sendMessage(type),
-                          maxLines: 4,
-                          minLines: 1,
-                          decoration: const InputDecoration(
-                              hintText: "Type a message...",
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 10)),
-                        ),
-                      ),
-                    ],
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(25)),
+                  child: TextField(
+                    controller: _msgController,
+                    maxLines: 4,
+                    minLines: 1,
+                    decoration: const InputDecoration(
+                        hintText: "Type a message...",
+                        border: InputBorder.none),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => _sendMessage(type),
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                          colors: [Color(0xFF075E54), Color(0xFF128C7E)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight)),
-                  child: const Icon(Icons.send_rounded,
-                      color: Colors.white, size: 22),
-                ),
+              const SizedBox(width: 5),
+              CircleAvatar(
+                backgroundColor: ChatColors.primaryTeal,
+                child: IconButton(
+                    icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                    onPressed: () => _sendMessage(type)),
               ),
             ],
           ),
@@ -358,92 +451,25 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: ChatColors.background,
       appBar: AppBar(
         backgroundColor: ChatColors.appBarGreen,
-        elevation: 2,
-        leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new,
-                color: Colors.black, size: 20),
-            onPressed: () => Navigator.pop(context)),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-                _isPrivateChat
-                    ? "Chat with ${widget.targetUserName}"
-                    : "Department Chat",
-                style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold)),
-            Text(widget.userName,
-                style: const TextStyle(color: Colors.black54, fontSize: 11)),
-          ],
-        ),
+        title: Text(
+            _isPrivateChat
+                ? "Chat with ${widget.targetUserName} Desk"
+                : "Department Chat",
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: ChatColors.primaryTeal,
-          indicatorWeight: 3,
-          labelColor: ChatColors.primaryTeal,
-          unselectedLabelColor: Colors.black54,
-          labelStyle:
-              const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
           tabs: const [Tab(text: "COMMON GROUP"), Tab(text: "HOD DESK")],
         ),
       ),
-      body: Stack(children: [
-        Positioned.fill(child: _buildPremiumBackground()),
-        TabBarView(
-            controller: _tabController,
-            children: [_buildChatList("group"), _buildChatList("hod")])
-      ]),
+      body: TabBarView(
+        controller: _tabController,
+        children: [_buildChatList("group"), _buildChatList("hod")],
+      ),
       bottomNavigationBar: _buildInputBar(),
     );
   }
-
-  Widget _buildPremiumBackground() {
-    return Container(
-      decoration: const BoxDecoration(
-          gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-            Color(0xFFECF3EC),
-            Color(0xFFE8F5E9),
-            Color(0xFFE0EEF4),
-            Color(0xFFEFF6F0)
-          ],
-              stops: [
-            0.0,
-            0.35,
-            0.65,
-            1.0
-          ])),
-      child: CustomPaint(
-          painter: _ChatBackgroundPainter(), child: const SizedBox.expand()),
-    );
-  }
-}
-
-class _ChatBackgroundPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..style = PaintingStyle.fill;
-    paint.color = const Color(0xFF075E54).withOpacity(0.04);
-    canvas.drawCircle(Offset(size.width * 0.9, size.height * 0.08), 120, paint);
-    paint.color = const Color(0xFF128C7E).withOpacity(0.05);
-    canvas.drawCircle(Offset(size.width * 0.1, size.height * 0.85), 100, paint);
-    final linePaint = Paint()
-      ..color = const Color(0xFF075E54).withOpacity(0.025)
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-    for (double i = -size.height; i < size.width + size.height; i += 30) {
-      canvas.drawLine(
-          Offset(i, 0), Offset(i + size.height, size.height), linePaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

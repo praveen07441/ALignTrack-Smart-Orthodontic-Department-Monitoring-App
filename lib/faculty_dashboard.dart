@@ -50,7 +50,36 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
   @override
   void initState() {
     super.initState();
-    // NotificationService init is now handled in main.dart for iOS handshake stability
+  }
+
+  // ================= ✅ SMART CHAT & BADGE RESET LOGIC =================
+
+  Future<void> _markMessagesAsSeen() async {
+    try {
+      final snapshot =
+          await FirebaseFirestore.instance.collection('chat').get();
+      final batch = FirebaseFirestore.instance.batch();
+      bool hasUpdates = false;
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final seenBy = List.from(data['seenBy'] ?? []);
+
+        // Logic check: Is this a group message or a private message for THIS Faculty?
+        bool isRelevant = data['type'] == 'group' ||
+            (data['type'] == 'hod' && data['targetUserId'] == widget.userId);
+
+        if (isRelevant && !seenBy.contains(widget.userId)) {
+          batch.update(doc.reference, {
+            'seenBy': FieldValue.arrayUnion([widget.userId])
+          });
+          hasUpdates = true;
+        }
+      }
+      if (hasUpdates) await batch.commit();
+    } catch (e) {
+      debugPrint("Faculty Badge reset error: $e");
+    }
   }
 
   Future<void> _getHodAndNavigate() async {
@@ -93,6 +122,64 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
       }
     }
   }
+
+  Widget _buildChatIcon() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('chat').snapshots(),
+      builder: (context, snapshot) {
+        int unreadCount = 0;
+        if (snapshot.hasData) {
+          for (var doc in snapshot.data!.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            final seenBy = List.from(data['seenBy'] ?? []);
+            if (data['userId'] == widget.userId) continue;
+
+            bool isRelevant = data['type'] == 'group' ||
+                (data['type'] == 'hod' &&
+                    data['targetUserId'] == widget.userId);
+
+            if (isRelevant && !seenBy.contains(widget.userId)) {
+              unreadCount++;
+            }
+          }
+        }
+
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            IconButton(
+                icon: const Icon(Icons.chat_bubble_outline,
+                    color: Colors.black, size: 26),
+                onPressed: () async {
+                  await _markMessagesAsSeen(); // ✅ Clear notification numbers
+                  _getHodAndNavigate(); // ✅ Go to chat
+                }),
+            if (unreadCount > 0)
+              Positioned(
+                  right: 6,
+                  top: 6,
+                  child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: AppColors.primary, width: 1.5)),
+                      constraints:
+                          const BoxConstraints(minWidth: 18, minHeight: 18),
+                      child: Text(unreadCount > 99 ? '99+' : '$unreadCount',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold),
+                          textAlign: TextAlign.center))),
+          ],
+        );
+      },
+    );
+  }
+
+  // ================= ✅ PDF EXPORT LOGIC =================
 
   Future<void> _exportMonthlyFacultyPDF() async {
     setState(() => isExporting = true);
@@ -209,55 +296,6 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
     }
   }
 
-  Widget _buildChatIcon() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('chat').snapshots(),
-      builder: (context, snapshot) {
-        int unreadCount = 0;
-        if (snapshot.hasData) {
-          for (var doc in snapshot.data!.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final seenBy = data['seenBy'] ?? [];
-            if (data['userId'] == widget.userId) continue;
-            bool isRelevant = data['type'] == 'group' ||
-                (data['type'] == 'hod' &&
-                    data['targetUserId'] == widget.userId);
-            if (isRelevant && !seenBy.contains(widget.userId)) unreadCount++;
-          }
-        }
-
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            IconButton(
-                icon: const Icon(Icons.chat_bubble_outline,
-                    color: Colors.black, size: 26),
-                onPressed: _getHodAndNavigate),
-            if (unreadCount > 0)
-              Positioned(
-                  right: 6,
-                  top: 6,
-                  child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                          border:
-                              Border.all(color: AppColors.primary, width: 1.5)),
-                      constraints:
-                          const BoxConstraints(minWidth: 18, minHeight: 18),
-                      child: Text(unreadCount > 99 ? '99+' : '$unreadCount',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold),
-                          textAlign: TextAlign.center))),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -275,10 +313,12 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
           isExporting
               ? const SizedBox(
                   width: 40,
-                  child:
-                      Center(child: CircularProgressIndicator(strokeWidth: 2)))
+                  child: Center(
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.black)))
               : IconButton(
-                  icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
+                  icon: const Icon(Icons.picture_as_pdf_outlined,
+                      color: Colors.black),
                   onPressed: _exportMonthlyFacultyPDF),
           _buildChatIcon(),
         ],
@@ -378,7 +418,6 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
     );
   }
 
-  // Reminder section remains same but ensured it uses the centralized formattedDate
   void _showAddReminderDialog() {
     final TextEditingController titleController = TextEditingController();
     final TextEditingController descController = TextEditingController();
@@ -471,7 +510,7 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty)
               return const Center(
                   child: Text("No reminders for today",
-                      style: TextStyle(color: Colors.grey)));
+                      style: TextStyle(color: Colors.grey, fontSize: 12)));
             return ListView(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -484,6 +523,8 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
                       style: TextStyle(
                           decoration:
                               isDone ? TextDecoration.lineThrough : null)),
+                  subtitle: Text(
+                      "${data['time'] ?? ''} ${data['description'] ?? ''}"),
                   onChanged: (val) => doc.reference
                       .update({'status': val! ? 'completed' : 'pending'}),
                 );
@@ -496,7 +537,7 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
   }
 }
 
-// ================= FACULTY ENTRY SCREEN (DISPOSE READY) =================
+// ================= FACULTY ENTRY SCREEN =================
 class FacultyEntryScreen extends StatefulWidget {
   final String userId, userName, slot, date;
   const FacultyEntryScreen(
@@ -529,7 +570,6 @@ class _FacultyEntryScreenState extends State<FacultyEntryScreen> {
 
   @override
   void dispose() {
-    // Memory Safety: Dispose all controllers when leaving the screen
     for (var entry in _entries) {
       (entry['controller'] as TextEditingController).dispose();
     }

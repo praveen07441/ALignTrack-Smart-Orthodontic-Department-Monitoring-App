@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:flutter/foundation.dart';
@@ -12,33 +14,36 @@ class NotificationService {
 
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
+
   bool _isInitialized = false;
 
-  // ✅ REQUEST PERMISSIONS (Critical for Android 13+ & iOS)
+  // ================= PERMISSIONS =================
   Future<void> requestPermissions() async {
     if (Platform.isAndroid) {
       final androidImpl = _notifications.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
-      await androidImpl?.requestExactAlarmsPermission();
       await androidImpl?.requestNotificationsPermission();
+      await androidImpl?.requestExactAlarmsPermission();
     } else if (Platform.isIOS) {
       await _notifications
           .resolvePlatformSpecificImplementation<
               IOSFlutterLocalNotificationsPlugin>()
           ?.requestPermissions(alert: true, badge: true, sound: true);
     }
+
+    // 🔥 ALSO request FCM permission
+    await FirebaseMessaging.instance.requestPermission();
   }
 
-  // ✅ INIT SERVICE
+  // ================= INIT =================
   Future<void> init() async {
-    if (_isInitialized) return; // Prevent double initialization
+    if (_isInitialized) return;
 
-    // ✅ SAFE TIMEZONE INIT: Prevents iOS boot freeze
     try {
       tz_data.initializeTimeZones();
       tz.setLocalLocation(tz.local);
     } catch (e) {
-      debugPrint("Timezone init failed: $e. Falling back to UTC.");
+      debugPrint("Timezone init failed: $e");
       tz.setLocalLocation(tz.UTC);
     }
 
@@ -54,19 +59,18 @@ class NotificationService {
     await _notifications.initialize(
       const InitializationSettings(android: androidSettings, iOS: iosSettings),
       onDidReceiveNotificationResponse: (details) {
-        debugPrint("Notification tapped with payload: ${details.payload}");
+        debugPrint("🔔 Notification tapped: ${details.payload}");
+        // 👉 You can navigate to chat screen here using NavigatorKey
       },
     );
 
-    // Create High-Importance Channel for Android
+    // 🔥 Create Notification Channel
     if (Platform.isAndroid) {
       const channel = AndroidNotificationChannel(
         'clinical_reminders_v4',
-        'Clinical Alarm Reminders',
-        description: 'Critical patient care and task alerts',
+        'Clinical Notifications',
+        description: 'App notifications',
         importance: Importance.max,
-        playSound: true,
-        enableVibration: true,
       );
 
       await _notifications
@@ -76,64 +80,92 @@ class NotificationService {
     }
 
     _isInitialized = true;
-    debugPrint("✅ Notification Service Initialized (iOS Ready)");
+    debugPrint("✅ Notification Service Initialized");
   }
 
-  // 🔧 SHARED NOTIFICATION DETAILS
-  NotificationDetails _getNotificationDetails({String? category}) {
-    if (Platform.isAndroid) {
-      final vibrationPattern =
-          Int64List.fromList([0, 500, 200, 500, 200, 1000]);
-      return NotificationDetails(
-        android: AndroidNotificationDetails(
-          'clinical_reminders_v4',
-          'Clinical Alarm Reminders',
-          importance: Importance.max,
-          priority: Priority.high,
-          fullScreenIntent: true,
-          category: AndroidNotificationCategory.alarm,
-          visibility: NotificationVisibility.public,
-          vibrationPattern: vibrationPattern,
-          playSound: true,
-          audioAttributesUsage: AudioAttributesUsage.alarm,
-        ),
-      );
-    } else {
-      return const NotificationDetails(
-        iOS: DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: true,
-          // ✅ SAFE LEVEL: Uses 'active' to avoid entitlement issues
-          interruptionLevel: InterruptionLevel.active,
-        ),
-      );
-    }
+  // ================= FCM LISTENER =================
+  void setupFCMListeners() {
+    // 🔔 Foreground messages
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      final notification = message.notification;
+
+      if (notification != null) {
+        showNotification(
+          title: notification.title ?? "New Message",
+          body: notification.body ?? "",
+          payload: message.data['senderId'],
+        );
+      }
+    });
+
+    // 🔔 Background click
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      debugPrint("📲 Opened from background: ${message.data}");
+    });
+
+    // 🔔 Terminated state
+    FirebaseMessaging.instance.getInitialMessage().then((message) {
+      if (message != null) {
+        debugPrint("🚀 Opened from terminated: ${message.data}");
+      }
+    });
   }
 
-  // 🔔 INSTANT TEST
-  Future<void> testInstantNotification() async {
-    await _notifications.show(
-      999,
-      "🔔 System Test",
-      "ALignTrack notification service is active.",
-      _getNotificationDetails(),
-      payload: 'test_payload',
+  // ================= COMMON SETTINGS =================
+  NotificationDetails _getDetails() {
+    return NotificationDetails(
+      android: AndroidNotificationDetails(
+        'clinical_reminders_v4',
+        'Clinical Notifications',
+        importance: Importance.max,
+        priority: Priority.high,
+        playSound: true,
+        vibrationPattern: Int64List.fromList([0, 500, 200, 500]),
+      ),
+      iOS: const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
     );
   }
 
-  // ⏰ SCHEDULED ALARM
+  // ================= 🔔 SHOW NOTIFICATION =================
+  Future<void> showNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+    await _notifications.show(
+      id,
+      title,
+      body,
+      _getDetails(),
+      payload: payload,
+    );
+  }
+
+  // ================= TEST =================
+  Future<void> testInstantNotification() async {
+    await showNotification(
+      title: "🔔 Test",
+      body: "Notification working!",
+    );
+  }
+
+  // ================= SCHEDULE =================
   Future<void> scheduleNotification({
     required int id,
     required String title,
     required String body,
     required DateTime scheduledTime,
-    String? payload,
   }) async {
     final scheduledTZTime = tz.TZDateTime.from(scheduledTime, tz.local);
 
     if (scheduledTZTime.isBefore(tz.TZDateTime.now(tz.local))) {
-      debugPrint("❌ Cannot schedule in the past: $scheduledTZTime");
+      debugPrint("❌ Cannot schedule in past");
       return;
     }
 
@@ -142,17 +174,18 @@ class NotificationService {
       title,
       body,
       scheduledTZTime,
-      _getNotificationDetails(),
+      _getDetails(),
       androidScheduleMode: AndroidScheduleMode.alarmClock,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
-      payload: payload,
     );
-
-    debugPrint("✅ Scheduled: '$title' for $scheduledTZTime");
   }
 
-  Future<void> cancelNotification(int id) async =>
-      await _notifications.cancel(id);
-  Future<void> cancelAll() async => await _notifications.cancelAll();
+  Future<void> cancelNotification(int id) async {
+    await _notifications.cancel(id);
+  }
+
+  Future<void> cancelAll() async {
+    await _notifications.cancelAll();
+  }
 }

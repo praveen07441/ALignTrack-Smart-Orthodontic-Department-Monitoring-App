@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart'; // ✅ Added for Notifications
 
 // Dashboard Imports
 import 'pg_dashboard.dart';
@@ -108,6 +109,14 @@ class _LoginScreenState extends State<LoginScreen> {
       await _handleRememberMe();
 
       User user = userCredential.user!;
+
+      // 🔔 SAVE FCM TOKEN (For Notifications)
+      String? fcmToken = await FirebaseMessaging.instance.getToken();
+      if (fcmToken != null) {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+          'fcmToken': fcmToken,
+        }, SetOptions(merge: true));
+      }
 
       // 2. Database Role Fetch
       final doc = await FirebaseFirestore.instance

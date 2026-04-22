@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:pdf/pdf.dart';
@@ -10,9 +11,11 @@ import 'chat_screen.dart';
 class AppColors {
   static const Color primary = Color(0xFFC8E6C9);
   static const Color accent = Color(0xFF075E54);
-  static const Color background = Color(0xFFF1F8E9);
+  static const Color background = Color(0xFFF8FAF8);
   static const Color submitted = Color(0xFF2E7D32);
+  static const Color submittedBg = Color(0xFFE8F5E9);
   static const Color pending = Color(0xFFF57C00);
+  static const Color pendingBg = Color(0xFFFFF3E0);
   static const Color accentTeal = Color(0xFF00695C);
   static const Color textDark = Color(0xFF2D3436);
 }
@@ -31,14 +34,47 @@ class _HodDashboardState extends State<HodDashboard> {
 
   String get formattedDate => DateFormat('yyyy-MM-dd').format(selectedDate);
 
-  @override
-  void initState() {
-    super.initState();
-    // NotificationService init is handled in main.dart
+  // Helper: Prevents PDF crashes by limiting text length in cells
+  String safeText(String? text, {int limit = 100}) {
+    if (text == null || text.isEmpty) return "-";
+    return text.length > limit ? "${text.substring(0, limit)}..." : text;
   }
 
-  // ================= CHAT NAVIGATION =================
+  // ================= ✅ STABLE UNREAD RESET LOGIC =================
+  Future<void> _markMessagesAsSeen() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('chat')
+          .orderBy('clientTimestamp', descending: true)
+          .limit(200)
+          .get();
+
+      final batch = FirebaseFirestore.instance.batch();
+      bool hasUpdates = false;
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final seenBy = List.from(data['seenBy'] ?? []);
+
+        bool isRelevant = data['type'] == 'group' ||
+            data['targetUserId'] == widget.userId ||
+            data['userId'] == widget.userId;
+
+        if (isRelevant && !seenBy.contains(widget.userId)) {
+          batch.update(doc.reference, {
+            'seenBy': FieldValue.arrayUnion([widget.userId])
+          });
+          hasUpdates = true;
+        }
+      }
+      if (hasUpdates) await batch.commit();
+    } catch (e) {
+      debugPrint("Seen update error: $e");
+    }
+  }
+
   void _openCommonChat() {
+    _markMessagesAsSeen();
     Navigator.push(
         context,
         MaterialPageRoute(
@@ -50,6 +86,7 @@ class _HodDashboardState extends State<HodDashboard> {
   }
 
   void _openPrivateChat(String targetId, String targetName) {
+    _markMessagesAsSeen();
     Navigator.push(
         context,
         MaterialPageRoute(
@@ -62,7 +99,7 @@ class _HodDashboardState extends State<HodDashboard> {
                 )));
   }
 
-  // ================= MASTER PDF EXPORT =================
+  // ================= ✅ PRODUCTION PDF EXPORT (LAYOUT FIXED) =================
   Future<void> exportMonthlyPDF() async {
     setState(() => isExporting = true);
     try {
@@ -79,137 +116,169 @@ class _HodDashboardState extends State<HodDashboard> {
           .get();
 
       if (snapshot.docs.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text("No records found for this 30-day period.")));
-        }
+        if (mounted)
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text("No records found.")));
         return;
       }
 
       List<List<String>> masterData = [];
       int serialNo = 1;
-
       for (var doc in snapshot.docs) {
         final data = doc.data();
-        final String name = data['userName'] ?? 'Unknown';
-        final String role = data['role'] ?? '-';
-        final String dateStr = data['date'] ?? '-';
-        final String time = data['timestamp'] != null
-            ? DateFormat('hh:mm a')
-                .format((data['timestamp'] as Timestamp).toDate())
-            : '-';
+        final name = data['userName'] ?? 'Unknown';
+        final role = data['role'] ?? '-';
+        final date = data['date'] ?? '-';
 
         if (role == "PG") {
-          final patients = data['patients'] as List? ?? [];
-          for (var p in patients) {
+          for (var p in (data['patients'] as List? ?? [])) {
             masterData.add([
               "${serialNo++}",
-              "$dateStr\n$time",
+              "$date",
               name,
               "PG Clinical",
               "Pt: ${p['patientName']}\nOP: ${p['opNumber']}",
-              "Proc: ${p['procedure']}\nStaff: ${p['staffName']}"
+              "Staff: ${p['staffName']}\nProc: ${safeText(p['procedure'])}"
             ]);
           }
         } else if (role == "Faculty") {
-          final workEntries = data['workEntries'] as List? ?? [];
-          for (var w in workEntries) {
+          for (var w in (data['workEntries'] as List? ?? [])) {
             masterData.add([
               "${serialNo++}",
-              "$dateStr\n$time",
+              "$date",
               name,
               "Faculty",
               "Cat: ${w['category']}",
-              "Work: ${w['details']}"
+              "Details: ${safeText(w['details'])}"
             ]);
           }
         } else if (role == "OPD Entry") {
           masterData.add([
             "${serialNo++}",
-            "$dateStr\n$time",
+            "$date",
             name,
             "OPD Unit",
             "Pt: ${data['patientName']}\nOP: ${data['opNumber']}",
-            "Diag: ${data['diagnosis']}\nPG: ${data['pgStudentName']}"
+            "PG: ${data['pgStudentName']}\nDiag: ${safeText(data['diagnosis'])}"
           ]);
         }
       }
 
-      pdf.addPage(pw.MultiPage(
-        pageFormat: PdfPageFormat.a4.landscape,
-        margin: const pw.EdgeInsets.all(32),
-        header: (context) => pw.Column(children: [
-          pw.Text("DEPARTMENT MONITORING MASTER REPORT",
-              style: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  fontSize: 18,
-                  color: PdfColors.teal900)),
-          pw.Text(
-              "Duration: ${DateFormat('dd MMM').format(startDate)} to ${DateFormat('dd MMM yyyy').format(endDate)}",
-              style:
-                  const pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
-          pw.SizedBox(height: 10),
-          pw.Divider(thickness: 1, color: PdfColors.teal),
-        ]),
-        build: (context) => [
-          pw.SizedBox(height: 10),
-          pw.TableHelper.fromTextArray(
-            headers: [
-              "S.No",
-              "Date/Time",
-              "User",
-              "Log Type",
-              "Primary Info",
-              "Detailed Findings"
-            ],
-            data: masterData,
-            headerStyle: pw.TextStyle(
-                color: PdfColors.white,
-                fontWeight: pw.FontWeight.bold,
-                fontSize: 10),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.teal900),
-            cellStyle: const pw.TextStyle(fontSize: 8.5),
-            columnWidths: {
-              0: const pw.FixedColumnWidth(30),
-              1: const pw.FixedColumnWidth(70),
-              2: const pw.FixedColumnWidth(80),
-              3: const pw.FixedColumnWidth(70),
-              4: const pw.FixedColumnWidth(150),
-              5: const pw.FixedColumnWidth(250),
-            },
-            cellPadding: const pw.EdgeInsets.all(6),
-            border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-          ),
-        ],
-      ));
+      const int rowsPerPage = 20; // Adjusted for better multi-line row fit
+      for (int i = 0; i < masterData.length; i += rowsPerPage) {
+        final chunk = masterData.sublist(
+            i,
+            i + rowsPerPage > masterData.length
+                ? masterData.length
+                : i + rowsPerPage);
 
+        pdf.addPage(pw.MultiPage(
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.all(32),
+          header: (context) => pw.Column(children: [
+            pw.Text("DEPARTMENT MONITORING MASTER REPORT",
+                style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 16,
+                    color: PdfColors.teal900)),
+            pw.SizedBox(height: 5),
+            pw.Divider(color: PdfColors.teal, thickness: 1),
+            pw.SizedBox(height: 10),
+          ]),
+          build: (context) => [
+            pw.Table.fromTextArray(
+              headers: [
+                "S.No",
+                "Date",
+                "User",
+                "Log Type",
+                "Details (Primary)",
+                "Details (Secondary)"
+              ],
+              data: chunk,
+              headerDecoration:
+                  const pw.BoxDecoration(color: PdfColors.teal900),
+              headerStyle: pw.TextStyle(
+                  color: PdfColors.white,
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 9),
+              cellStyle: const pw.TextStyle(fontSize: 8),
+              cellAlignment: pw.Alignment.centerLeft,
+              cellHeight: 30,
+              columnWidths: {
+                0: const pw.FixedColumnWidth(30),
+                1: const pw.FixedColumnWidth(60),
+                2: const pw.FixedColumnWidth(70),
+                3: const pw.FixedColumnWidth(65),
+                4: const pw.FixedColumnWidth(140),
+                5: const pw.FixedColumnWidth(230),
+              },
+            ),
+          ],
+          footer: (context) => pw.Container(
+            alignment: pw.Alignment.centerRight,
+            padding: const pw.EdgeInsets.only(top: 10),
+            child: pw.Text(
+                "Page ${context.pageNumber} of ${context.pagesCount}",
+                style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey)),
+          ),
+        ));
+      }
       await Printing.layoutPdf(
           onLayout: (format) async => pdf.save(),
           name: 'Master_Report_$formattedDate');
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text("Error: $e")));
+            .showSnackBar(SnackBar(content: Text("PDF Error: $e")));
     } finally {
       if (mounted) setState(() => isExporting = false);
     }
   }
 
-  // ================= MONITORING UI =================
+  // ================= ✅ MONITORING UI =================
   Widget _buildMonitoringCategory(String title, String role) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Padding(
-          padding: const EdgeInsets.only(top: 15, bottom: 5),
-          child: Text(title,
-              style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: AppColors.accentTeal))),
-      _buildUserListForHOD(role),
-    ]);
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('department_entries')
+          .where('date', isEqualTo: formattedDate)
+          .where('role', isEqualTo: role)
+          .snapshots(),
+      builder: (context, snapshot) {
+        int total = 0;
+        if (snapshot.hasData) {
+          for (var doc in snapshot.data!.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            total += (data['patients']?.length ??
+                data['workEntries']?.length ??
+                1) as int;
+          }
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 20, 4, 10),
+            child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: AppColors.accentTeal)),
+                  Text("Total Entries: $total",
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                          color: Colors.black54)),
+                ]),
+          ),
+          _buildUserList(role),
+        ]);
+      },
+    );
   }
 
-  Widget _buildUserListForHOD(String role) {
+  Widget _buildUserList(String role) {
     return StreamBuilder<QuerySnapshot>(
       stream: role == "OPD Entry"
           ? FirebaseFirestore.instance
@@ -223,29 +292,24 @@ class _HodDashboardState extends State<HodDashboard> {
               .snapshots(),
       builder: (context, snap) {
         if (!snap.hasData || snap.data!.docs.isEmpty) {
-          return Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              child: const Text("No logs found.",
-                  style: TextStyle(color: Colors.grey, fontSize: 12)));
+          return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(
+                  child: Text("No data found for this date",
+                      style: TextStyle(color: Colors.grey, fontSize: 13))));
         }
-        return Container(
-          decoration: BoxDecoration(
-              color: Colors.white, borderRadius: BorderRadius.circular(15)),
-          child: Column(
-              children: snap.data!.docs
-                  .map((d) => role == "OPD Entry"
-                      ? _entryDetailTile(d, role)
-                      : _hodUserExpansionTile(d, role))
-                  .toList()),
-        );
+        return Column(
+            children: snap.data!.docs
+                .map((d) => role == "OPD Entry"
+                    ? _opdDetailCard(d)
+                    : _userExpansionCard(d, role))
+                .toList());
       },
     );
   }
 
-  Widget _hodUserExpansionTile(DocumentSnapshot user, String role) {
-    final data = user.data() as Map<String, dynamic>;
-    final String name = data['name'] ?? "Unknown";
+  Widget _userExpansionCard(DocumentSnapshot user, String role) {
+    final name = (user.data() as Map<String, dynamic>)['name'] ?? "Unknown";
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('department_entries')
@@ -253,115 +317,153 @@ class _HodDashboardState extends State<HodDashboard> {
           .where('date', isEqualTo: formattedDate)
           .snapshots(),
       builder: (context, logSnap) {
-        bool hasData = logSnap.hasData && logSnap.data!.docs.isNotEmpty;
-        return ExpansionTile(
-          leading: Icon(hasData ? Icons.check_circle : Icons.pending_actions,
-              color: hasData ? AppColors.submitted : AppColors.pending,
-              size: 20),
-          title: Text(name,
-              style:
-                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-          trailing: IconButton(
-              icon: const Icon(Icons.chat_outlined,
-                  color: AppColors.accentTeal, size: 20),
-              onPressed: () => _openPrivateChat(user.id, name)),
-          children: hasData
-              ? logSnap.data!.docs
-                  .map((d) => _entryDetailTile(d, role))
-                  .toList()
-              : [
-                  const Text("Pending submission",
-                      style: TextStyle(fontSize: 11, color: Colors.grey))
-                ],
+        if (!logSnap.hasData) return const SizedBox();
+        bool hasData = logSnap.data!.docs.isNotEmpty;
+        int entryCount = 0;
+        if (hasData) {
+          for (var doc in logSnap.data!.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            entryCount += (data['patients']?.length ??
+                data['workEntries']?.length ??
+                1) as int;
+          }
+        }
+        return Card(
+          elevation: 0,
+          margin: const EdgeInsets.only(bottom: 8),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
+              side: BorderSide(color: Colors.grey.shade200)),
+          color: hasData ? AppColors.submittedBg : AppColors.pendingBg,
+          child: ExpansionTile(
+            shape: const Border(),
+            leading: CircleAvatar(
+              backgroundColor:
+                  hasData ? AppColors.submitted : AppColors.pending,
+              child: Icon(hasData ? Icons.check : Icons.access_time,
+                  color: Colors.white, size: 20),
+            ),
+            title: Text(name,
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            subtitle: Text(
+                hasData
+                    ? "Submitted • $entryCount entries"
+                    : "Pending Submission",
+                style: TextStyle(
+                    fontSize: 12,
+                    color: hasData ? AppColors.submitted : AppColors.pending)),
+            trailing: IconButton(
+                icon: const Icon(Icons.forum_outlined,
+                    color: AppColors.accentTeal),
+                onPressed: () => _openPrivateChat(user.id, name)),
+            children: hasData
+                ? logSnap.data!.docs
+                    .map((d) => _entryDetailList(d, role))
+                    .toList()
+                : [],
+          ),
         );
       },
     );
   }
 
-  Widget _entryDetailTile(DocumentSnapshot doc, String role) {
+  Widget _entryDetailList(DocumentSnapshot doc, String role) {
     final data = doc.data() as Map<String, dynamic>;
     return Container(
-      padding: const EdgeInsets.all(12),
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      width: double.infinity,
+      padding: const EdgeInsets.all(15),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       decoration: BoxDecoration(
-          color: AppColors.background.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(12)),
-      child: Column(children: [
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.black12)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (role == "PG")
-          ...(data['patients'] as List).map((p) => _dataRow(
-              "Pt: ${p['patientName']}",
-              "Proc: ${p['procedure']}",
-              Icons.medical_services))
+          ...(data['patients'] as List)
+              .map((p) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _infoRow("Staff", p['staffName'], Icons.person_search),
+                        _infoRow("Patient", p['patientName'], Icons.person),
+                        _infoRow("OP No", p['opNumber'], Icons.numbers),
+                        _infoRow("Procedure", p['procedure'],
+                            Icons.medical_services),
+                        const Divider(),
+                      ]))
+              .toList()
         else if (role == "Faculty")
-          ...(data['workEntries'] as List).map((w) => _dataRow(
-              w['category'] ?? 'Work', w['details'] ?? '-', Icons.work))
-        else
-          _dataRow("OPD Patient", data['patientName'], Icons.assignment),
+          ...(data['workEntries'] as List)
+              .map((w) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _infoRow("Category", w['category'], Icons.category),
+                        _infoRow("Details", w['details'], Icons.description),
+                        const Divider(),
+                      ]))
+              .toList()
       ]),
     );
   }
 
-  Widget _dataRow(String label, String value, IconData icon) => Row(children: [
-        Icon(icon, size: 14, color: AppColors.accentTeal),
-        const SizedBox(width: 8),
-        Expanded(
-            child:
-                Text("$label: $value", style: const TextStyle(fontSize: 12))),
-      ]);
-
-  // ================= ADMIN TASKS =================
-  void _showHODTaskDialog() {
-    final TextEditingController titleController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("New HOD Task"),
-        content: TextField(
-            controller: titleController,
-            decoration: const InputDecoration(labelText: "Task Title")),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancel")),
-          ElevatedButton(
-              onPressed: () async {
-                if (titleController.text.isEmpty) return;
-                await FirebaseFirestore.instance
-                    .collection('users')
-                    .doc(widget.userId)
-                    .collection('reminders')
-                    .add({
-                  'title': titleController.text,
-                  'status': 'pending',
-                  'date': formattedDate,
-                  'createdAt': FieldValue.serverTimestamp(),
-                });
-                Navigator.pop(context);
-              },
-              child: const Text("Save")),
-        ],
+  Widget _opdDetailCard(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15),
+          side: const BorderSide(color: Colors.black12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(children: [
+          _infoRow("Patient", data['patientName'], Icons.person_outline),
+          _infoRow("Diagnosis", data['diagnosis'], Icons.biotech),
+          _infoRow("PG Assigned", data['pgStudentName'], Icons.assignment_ind),
+        ]),
       ),
     );
   }
 
+  Widget _infoRow(String label, String? value, IconData icon) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(children: [
+          Icon(icon, size: 14, color: AppColors.accentTeal),
+          const SizedBox(width: 8),
+          Text("$label: ",
+              style:
+                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+          Expanded(
+              child: Text(value ?? "-", style: const TextStyle(fontSize: 12))),
+        ]),
+      );
+
+  // ================= ✅ APP BAR & SMART BADGE =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text("HOD Management",
-            style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+            style:
+                TextStyle(color: Colors.black87, fontWeight: FontWeight.w900)),
         backgroundColor: AppColors.primary,
         elevation: 0,
         actions: [
           isExporting
-              ? const CircularProgressIndicator()
+              ? const Center(
+                  child: Padding(
+                      padding: EdgeInsets.all(15),
+                      child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2))))
               : IconButton(
-                  icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
+                  icon: const Icon(Icons.picture_as_pdf_outlined,
+                      color: Colors.black87),
                   onPressed: exportMonthlyPDF),
-          IconButton(
-              icon: const Icon(Icons.chat_bubble_outline, color: Colors.black),
-              onPressed: _openCommonChat),
+          _buildChatIcon(),
+          const SizedBox(width: 8),
         ],
       ),
       body: SingleChildScrollView(
@@ -371,18 +473,13 @@ class _HodDashboardState extends State<HodDashboard> {
             padding: const EdgeInsets.all(16),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text("ADMIN TASKS",
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.black54)),
-                IconButton(
-                    onPressed: _showHODTaskDialog,
-                    icon: const Icon(Icons.add_circle,
-                        color: AppColors.accentTeal)),
-              ]),
-              _buildMonitoringCategory("PG Students", "PG"),
-              _buildMonitoringCategory("Faculty", "Faculty"),
-              _buildMonitoringCategory("OPD Unit", "OPD Entry"),
+              _sectionTitle("PRIVATE ADMIN TASKS", Icons.add_circle_outline,
+                  _showHODTaskDialog),
+              const Divider(),
+              _sectionTitle("LIVE SUBMISSION MONITORING", null, null),
+              _buildMonitoringCategory("PG Students (Clinical Logs)", "PG"),
+              _buildMonitoringCategory("Faculty Work Logs", "Faculty"),
+              _buildMonitoringCategory("OPD Registration Unit", "OPD Entry"),
             ]),
           ),
         ]),
@@ -390,14 +487,75 @@ class _HodDashboardState extends State<HodDashboard> {
     );
   }
 
+  Widget _sectionTitle(String title, IconData? icon, VoidCallback? onTap) {
+    return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      Text(title,
+          style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              color: Colors.black45,
+              fontSize: 11,
+              letterSpacing: 1.1)),
+      if (icon != null)
+        IconButton(
+            onPressed: onTap, icon: Icon(icon, color: AppColors.accentTeal)),
+    ]);
+  }
+
+  Widget _buildChatIcon() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('chat')
+          .orderBy('clientTimestamp', descending: true)
+          .limit(150)
+          .snapshots(),
+      builder: (context, snapshot) {
+        int unread = 0;
+        if (snapshot.hasData) {
+          unread = snapshot.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final seenBy = List.from(data['seenBy'] ?? []);
+            bool isRelevant = data['type'] == 'group' ||
+                data['targetUserId'] == widget.userId ||
+                data['userId'] == widget.userId;
+            return isRelevant &&
+                !seenBy.contains(widget.userId) &&
+                data['userId'] != widget.userId;
+          }).length;
+        }
+        return Stack(alignment: Alignment.center, children: [
+          IconButton(
+              icon: const Icon(Icons.forum_outlined, color: Colors.black87),
+              onPressed: _openCommonChat),
+          if (unread > 0)
+            Positioned(
+                right: 8,
+                top: 8,
+                child: CircleAvatar(
+                    radius: 9,
+                    backgroundColor: Colors.red,
+                    child: Text(unread > 99 ? '99+' : '$unread',
+                        style: const TextStyle(
+                            fontSize: 8,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold)))),
+        ]);
+      },
+    );
+  }
+
   Widget _buildHeaderDatePicker() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 5, 16, 25),
       decoration: const BoxDecoration(
           color: AppColors.primary,
           borderRadius: BorderRadius.only(
-              bottomLeft: Radius.circular(30),
-              bottomRight: Radius.circular(30))),
+              bottomLeft: Radius.circular(35),
+              bottomRight: Radius.circular(35)),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black12, blurRadius: 10, offset: Offset(0, 5))
+          ]),
       child: InkWell(
         onTap: () async {
           final d = await showDatePicker(
@@ -408,17 +566,63 @@ class _HodDashboardState extends State<HodDashboard> {
           if (d != null) setState(() => selectedDate = d);
         },
         child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-                color: Colors.white, borderRadius: BorderRadius.circular(15)),
-            child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(DateFormat('EEEE, dd MMM yyyy').format(selectedDate),
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const Icon(Icons.calendar_month, color: AppColors.accent)
-                ])),
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+              color: Colors.white, borderRadius: BorderRadius.circular(18)),
+          child:
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(DateFormat('EEEE').format(selectedDate),
+                  style: const TextStyle(
+                      color: Colors.black38,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold)),
+              Text(DateFormat('dd MMMM, yyyy').format(selectedDate),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                      color: AppColors.accentTeal)),
+            ]),
+            const CircleAvatar(
+                backgroundColor: AppColors.primary,
+                child: Icon(Icons.calendar_today_rounded,
+                    color: AppColors.accent, size: 20)),
+          ]),
+        ),
       ),
     );
+  }
+
+  void _showHODTaskDialog() {
+    final ctrl = TextEditingController();
+    showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+              title: const Text("New Admin Task"),
+              content: TextField(
+                  controller: ctrl,
+                  decoration: const InputDecoration(hintText: "Enter task...")),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text("Cancel")),
+                ElevatedButton(
+                    onPressed: () async {
+                      if (ctrl.text.isEmpty) return;
+                      await FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(widget.userId)
+                          .collection('reminders')
+                          .add({
+                        'title': ctrl.text,
+                        'status': 'pending',
+                        'date': formattedDate,
+                        'createdAt': FieldValue.serverTimestamp(),
+                      });
+                      Navigator.pop(context);
+                    },
+                    child: const Text("Save")),
+              ],
+            ));
   }
 }

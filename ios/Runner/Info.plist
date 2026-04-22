@@ -2,38 +2,55 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+
+    <!-- APP BASIC INFO -->
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
+
     <key>CFBundleDisplayName</key>
-    <string>Clinical Monitor</string>
+    <string>ALignTrack</string>
+
+    <key>CFBundleName</key>
+    <string>ALignTrack</string>
+
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
+
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>clinical_monitor</string>
+
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+
     <key>CFBundleShortVersionString</key>
     <string>$(FLUTTER_BUILD_NAME)</string>
+
     <key>CFBundleSignature</key>
     <string>????</string>
+
     <key>CFBundleVersion</key>
     <string>$(FLUTTER_BUILD_NUMBER)</string>
+
     <key>LSRequiresIPhoneOS</key>
     <true/>
+
+    <!-- UI CONFIG -->
     <key>UILaunchStoryboardName</key>
     <string>LaunchScreen</string>
+
     <key>UIMainStoryboardFile</key>
     <string>Main</string>
+
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
+
     <key>UISupportedInterfaceOrientations~ipad</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>
@@ -41,32 +58,51 @@
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
+
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
+
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
 
-    <key>NSCameraUsageDescription</key>
-    <string>Clinical Monitor requires camera access to take photos of clinical records and patient progress.</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>Clinical Monitor requires access to your photo library to upload clinical attachments and documents.</string>
-    <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>Clinical Monitor needs permission to save images and generated PDF reports to your gallery.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Clinical Monitor requires microphone access if you wish to record video notes during clinical sessions.</string>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <false/>
 
+    <!-- CAMERA + MEDIA PERMISSIONS -->
+    <key>NSCameraUsageDescription</key>
+    <string>ALignTrack requires camera access to capture clinical images and patient progress.</string>
+
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>ALignTrack requires access to your photo library to upload clinical attachments and documents.</string>
+
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>ALignTrack needs permission to save images and generated PDF reports to your gallery.</string>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>ALignTrack requires microphone access if you record video notes during clinical sessions.</string>
+
+    <!-- FILE / URL ACCESS (FOR OPENING FILES LIKE PDF) -->
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>http</string>
+        <string>https</string>
+    </array>
+
+    <!-- NETWORK (ALLOW FIREBASE + STORAGE URLS) -->
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
         <true/>
     </dict>
 
+    <!-- PUSH NOTIFICATIONS -->
     <key>UIBackgroundModes</key>
     <array>
         <string>fetch</string>
         <string>remote-notification</string>
     </array>
 
+    <!-- GOOGLE SIGN-IN / FIREBASE URL SCHEME -->
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
@@ -74,14 +110,14 @@
             <string>Editor</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>com.googleusercontent.apps.REPLACE_WITH_YOUR_ID</string>
+                <string>com.googleusercontent.apps.REPLACE_WITH_YOUR_REAL_ID</string>
             </array>
         </dict>
     </array>
 
-    <key>UIViewControllerBasedStatusBarAppearance</key>
-    <false/>
+    <!-- ENCRYPTION -->
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+
 </dict>
 </plist>
