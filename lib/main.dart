@@ -8,15 +8,15 @@ import 'login_screen.dart';
 // Notifications
 import 'notification_service.dart';
 
-// Firebase Options ← ADD THIS
+// Firebase Options
 import 'firebase_options.dart';
 
 // ==========================================================
-// 🔥 Background notification handler
+// 🔥 REQUIRED for background notifications
 // ==========================================================
 Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform, // ← ADD THIS
+    options: DefaultFirebaseOptions.currentPlatform,
   );
   debugPrint("🔔 Background Message: ${message.notification?.title}");
 }
@@ -24,7 +24,7 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🔥 Register background handler BEFORE Firebase init
+  // 🔥 Register background handler BEFORE Firebase init (best practice)
   FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
 
   try {
@@ -63,8 +63,13 @@ class _MyAppState extends State<MyApp> {
 
     Future.microtask(() async {
       try {
+        // 🔥 Initialize local notifications
         await NotificationService().init();
+
+        // 🔥 Request permissions
         await NotificationService().requestPermissions();
+
+        // 🔥 Setup FCM
         await _setupFCM();
 
         if (!_isFCMInitialized) {
@@ -77,9 +82,11 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
+  // ================= 🔔 FCM SETUP =================
   Future<void> _setupFCM() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
+    // 1. Request permission (iOS + Android 13+)
     NotificationSettings settings = await messaging.requestPermission(
       alert: true,
       badge: true,
@@ -87,6 +94,7 @@ class _MyAppState extends State<MyApp> {
     );
     debugPrint("Permission Status: ${settings.authorizationStatus}");
 
+    // 🔥 IMPORTANT: Show notifications in foreground (iOS)
     await FirebaseMessaging.instance
         .setForegroundNotificationPresentationOptions(
       alert: true,
@@ -94,13 +102,16 @@ class _MyAppState extends State<MyApp> {
       sound: true,
     );
 
+    // 2. Get FCM Token
     String? token = await messaging.getToken();
     debugPrint("🔥 FCM TOKEN: $token");
 
+    // 🔄 Token refresh listener
     FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
       debugPrint("🔄 New Token: $newToken");
     });
 
+    // 3. Foreground messages
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       debugPrint("🔔 Foreground Message: ${message.notification?.title}");
       if (message.notification != null) {
@@ -112,10 +123,12 @@ class _MyAppState extends State<MyApp> {
       }
     });
 
+    // 4. Background click
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint("📲 Notification Clicked (Background): ${message.data}");
     });
 
+    // 5. Terminated state
     RemoteMessage? initialMessage =
         await FirebaseMessaging.instance.getInitialMessage();
     if (initialMessage != null) {

@@ -4,6 +4,16 @@ import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
+/// Default [FirebaseOptions] for use with your Firebase apps.
+///
+/// Example:
+/// ```dart
+/// import 'firebase_options.dart';
+/// // ...
+/// await Firebase.initializeApp(
+///   options: DefaultFirebaseOptions.currentPlatform,
+/// );
+/// ```
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
@@ -42,7 +52,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyDIXAZOYnQKVTAzHqlZ86q0ZdlxTLDVnXg',
-    appId: '1:515311387206:android:77d153fb68251cffbc8047', // ← FIXED
+    appId: '1:515311387206:android:77d153fb68251cffbc8047',
     messagingSenderId: '515311387206',
     projectId: 'clinicalmonitorapp',
     storageBucket: 'clinicalmonitorapp.firebasestorage.app',
@@ -54,7 +64,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '515311387206',
     projectId: 'clinicalmonitorapp',
     storageBucket: 'clinicalmonitorapp.firebasestorage.app',
-    iosBundleId: 'com.praveen.clinicalmonitor', // ← FIXED
+    iosBundleId: 'com.praveen.clinicalmonitor',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -63,7 +73,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '515311387206',
     projectId: 'clinicalmonitorapp',
     storageBucket: 'clinicalmonitorapp.firebasestorage.app',
-    iosBundleId: 'com.praveen.clinicalmonitor', // ← FIXED
+    iosBundleId: 'com.praveen.clinicalmonitor',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
