@@ -10,7 +10,6 @@ import 'notification_service.dart';
 
 // ==========================================================
 // 🔥 REQUIRED for background notifications
-// This must be a top-level function (outside any class)
 // ==========================================================
 Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
@@ -20,12 +19,12 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  try {
-    // 1. Initialize Firebase
-    await Firebase.initializeApp();
+  // 🔥 Register background handler BEFORE Firebase init (best practice)
+  FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
 
-    // 2. Register background handler
-    FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+  try {
+    // Initialize Firebase
+    await Firebase.initializeApp();
   } catch (e) {
     debugPrint("Initialization Error: $e");
   }
@@ -55,19 +54,17 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
-    // Use microtask to perform async initialization after the first build frame
     Future.microtask(() async {
       try {
         // 🔥 Initialize local notifications
         await NotificationService().init();
 
-        // 🔥 Request permissions (local + FCM)
+        // 🔥 Request permissions
         await NotificationService().requestPermissions();
 
-        // 🔥 Setup Firebase Messaging Configuration
+        // 🔥 Setup FCM
         await _setupFCM();
 
-        // 🔥 Avoid duplicate listeners if initState is called multiple times
         if (!_isFCMInitialized) {
           NotificationService().setupFCMListeners();
           _isFCMInitialized = true;
@@ -78,11 +75,11 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
-  // ================= 🔔 FCM SETUP & LISTENERS =================
+  // ================= 🔔 FCM SETUP =================
   Future<void> _setupFCM() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // 1. Request explicit permission (Crucial for iOS and Android 13+)
+    // 1. Request permission (iOS + Android 13+)
     NotificationSettings settings = await messaging.requestPermission(
       alert: true,
       badge: true,
@@ -90,15 +87,24 @@ class _MyAppState extends State<MyApp> {
     );
     debugPrint("Permission Status: ${settings.authorizationStatus}");
 
-    // 2. Get device token for debugging/database
+    // 🔥 IMPORTANT: Show notifications in foreground (iOS)
+    await FirebaseMessaging.instance
+        .setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    // 2. Get FCM Token
     String? token = await messaging.getToken();
     debugPrint("🔥 FCM TOKEN: $token");
 
-    // ⚠️ Note: Actual token saving logic is handled in login_screen.dart
-    // to link the token to a specific UID.
+    // 🔄 Token refresh listener
+    FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+      debugPrint("🔄 New Token: $newToken");
+    });
 
-    // 3. Foreground Message Listener
-    // Triggered when the app is open and in view
+    // 3. Foreground messages
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       debugPrint("🔔 Foreground Message: ${message.notification?.title}");
 
@@ -111,14 +117,12 @@ class _MyAppState extends State<MyApp> {
       }
     });
 
-    // 4. Background Click Listener
-    // Triggered when the app is in the background and the user taps the notification
+    // 4. Background click
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint("📲 Notification Clicked (Background): ${message.data}");
     });
 
-    // 5. Terminated State handling
-    // Triggered if the app was completely closed and opened via a notification tap
+    // 5. Terminated state
     RemoteMessage? initialMessage =
         await FirebaseMessaging.instance.getInitialMessage();
 
@@ -150,15 +154,6 @@ class _MyAppState extends State<MyApp> {
             color: AppColors.textDark,
             fontSize: 20,
             fontWeight: FontWeight.bold,
-          ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.accentTeal,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
           ),
         ),
       ),
