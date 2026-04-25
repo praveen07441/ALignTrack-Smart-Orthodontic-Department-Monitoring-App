@@ -1,15 +1,15 @@
 plugins {
     id("com.android.application")
-    id("com.google.gms.google-services")
+    id("com.google.gms.google-services")   // 🔥 Firebase plugin
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
-    namespace = "com.example.clinical_monitor"
-    
-    // Updated to match your latest plugin requirements
-    compileSdk = 36 
+    // ✅ FIXED: Must match Firebase + iOS
+    namespace = "com.praveen.clinicalmonitor"
+
+    compileSdk = 36
 
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
@@ -22,19 +22,21 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.clinical_monitor"
-        
-        // Manual override for stability on TECNO Android 10
-        minSdk = flutter.minSdkVersion 
+        // ✅ FIXED: Must match Firebase
+        applicationId = "com.praveen.clinicalmonitor"
+
+        minSdk = flutter.minSdkVersion
         targetSdk = 36
-        
+
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        multiDexEnabled = true 
+
+        multiDexEnabled = true
     }
 
     buildTypes {
         release {
+            // ⚠️ Use proper signing later for Play Store
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -45,5 +47,13 @@ flutter {
 }
 
 dependencies {
+    // 🔥 Required for Java 17 support
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+
+    // 🔥 Firebase BOM (manages versions automatically)
+    implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
+
+    // 🔥 Firebase services
+    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-messaging")
 }

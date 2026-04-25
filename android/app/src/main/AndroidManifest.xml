@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.praveen.clinicalmonitor">
 
     <!-- 🔥 Internet & Network -->
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -12,16 +13,16 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
-    <!-- 🔥 Exact alarm (IMPORTANT for Android 10+) -->
+    <!-- 🔥 Exact alarm -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
 
-    <!-- ✅ NEW: Image & File picker permissions -->
+    <!-- 🔥 Storage (legacy support) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29"/>
 
-    <!-- ✅ NEW: Android 13+ media permissions -->
+    <!-- 🔥 Android 13+ media permissions -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
@@ -31,9 +32,9 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="true"
-        android:usesCleartextTraffic="true"
-        android:requestLegacyExternalStorage="true">
+        android:usesCleartextTraffic="true">
 
+        <!-- 🔥 Main Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -47,12 +48,13 @@
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme"/>
 
+            <!-- App launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
-            <!-- 🔥 Needed for notification click -->
+            <!-- Notification click handling -->
             <intent-filter>
                 <action android:name="SELECT_NOTIFICATION"/>
                 <category android:name="android.intent.category.DEFAULT"/>
@@ -60,12 +62,12 @@
 
         </activity>
 
-        <!-- 🔥 REQUIRED for scheduled notifications -->
+        <!-- 🔥 Scheduled notifications -->
         <receiver
             android:name="com.dexterous.flutter_local_notifications.ScheduledNotificationReceiver"
             android:exported="false"/>
 
-        <!-- 🔥 REQUIRED for reboot persistence -->
+        <!-- 🔥 Reboot persistence -->
         <receiver
             android:name="com.dexterous.flutter_local_notifications.ScheduledNotificationBootReceiver"
             android:exported="false">
@@ -78,7 +80,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- ✅ NEW: FileProvider — required for image/file picker on Android 7+ -->
+        <!-- 🔥 FileProvider (for image/file upload) -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
