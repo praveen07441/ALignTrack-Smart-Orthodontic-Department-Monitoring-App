@@ -50,7 +50,14 @@ post_install do |installer|
       # ✅ FIX: Ensure correct architectures for modern devices
       config.build_settings['ARCHS'] = '$(ARCHS_STANDARD)'
 
-      # ✅ Permission handler settings (kept as is)
+      # ✅ FIX: Resolve FileUtils duplicate class conflict (EXC_BAD_ACCESS fix)
+      config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
+      config.build_settings['OTHER_LDFLAGS'] << '-ObjC'
+
+      # ✅ FIX: Disable bitcode (not supported in newer Xcode)
+      config.build_settings['ENABLE_BITCODE'] = 'NO'
+
+      # ✅ Permission handler settings
       config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
         '$(inherited)',
         'PERMISSION_NOTIFICATIONS=1',

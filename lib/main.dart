@@ -82,6 +82,9 @@ class _MyAppState extends State<MyApp> {
   Future<void> _setupFCM() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
+    // ✅ Manually enable FCM since auto-init is disabled in Info.plist
+    await FirebaseMessaging.instance.setAutoInitEnabled(true);
+
     // 1. Request permission first
     NotificationSettings settings = await messaging.requestPermission(
       alert: true,
@@ -116,7 +119,7 @@ class _MyAppState extends State<MyApp> {
 
       if (apnsToken == null) {
         debugPrint("❌ APNS token unavailable after retries. Skipping FCM.");
-        return; // Don't crash, just skip
+        return;
       }
       debugPrint("🍎 APNS TOKEN: $apnsToken");
     }

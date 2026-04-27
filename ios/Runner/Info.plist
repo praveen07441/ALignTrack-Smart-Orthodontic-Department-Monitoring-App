@@ -68,6 +68,14 @@
     <key>UIViewControllerBasedStatusBarAppearance</key>
     <false/>
 
+    <!-- FIREBASE: DISABLE METHOD SWIZZLING (fixes EXC_BAD_ACCESS crash) -->
+    <key>FirebaseAppDelegateProxyEnabled</key>
+    <false/>
+
+    <!-- FIREBASE: DISABLE AUTO APNS REGISTRATION (handle manually in code) -->
+    <key>FirebaseMessagingAutoInitEnabled</key>
+    <false/>
+
     <!-- CAMERA + MEDIA PERMISSIONS -->
     <key>NSCameraUsageDescription</key>
     <string>ALignTrack requires camera access to capture clinical images and patient progress.</string>
