@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
@@ -24,11 +25,10 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🔥 Register background handler BEFORE Firebase init (best practice)
+  // 🔥 Register background handler BEFORE Firebase init
   FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
 
   try {
-    // ✅ Initialize Firebase WITH options
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
@@ -61,15 +61,11 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
-    Future.microtask(() async {
+    // ✅ Using addPostFrameCallback instead of microtask
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
-        // 🔥 Initialize local notifications
         await NotificationService().init();
-
-        // 🔥 Request permissions
         await NotificationService().requestPermissions();
-
-        // 🔥 Setup FCM
         await _setupFCM();
 
         if (!_isFCMInitialized) {
@@ -86,7 +82,7 @@ class _MyAppState extends State<MyApp> {
   Future<void> _setupFCM() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // 1. Request permission (iOS + Android 13+)
+    // 1. Request permission first
     NotificationSettings settings = await messaging.requestPermission(
       alert: true,
       badge: true,
@@ -94,7 +90,13 @@ class _MyAppState extends State<MyApp> {
     );
     debugPrint("Permission Status: ${settings.authorizationStatus}");
 
-    // 🔥 IMPORTANT: Show notifications in foreground (iOS)
+    if (settings.authorizationStatus != AuthorizationStatus.authorized &&
+        settings.authorizationStatus != AuthorizationStatus.provisional) {
+      debugPrint("❌ Notifications not authorized");
+      return;
+    }
+
+    // 2. Set foreground options BEFORE getting tokens
     await FirebaseMessaging.instance
         .setForegroundNotificationPresentationOptions(
       alert: true,
@@ -102,16 +104,33 @@ class _MyAppState extends State<MyApp> {
       sound: true,
     );
 
-    // 2. Get FCM Token
+    // 3. ✅ Wait for APNS token with retry loop (iOS only)
+    String? apnsToken;
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      for (int i = 0; i < 10; i++) {
+        apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+        if (apnsToken != null) break;
+        debugPrint("⏳ Waiting for APNS token... attempt ${i + 1}");
+        await Future.delayed(const Duration(seconds: 2));
+      }
+
+      if (apnsToken == null) {
+        debugPrint("❌ APNS token unavailable after retries. Skipping FCM.");
+        return; // Don't crash, just skip
+      }
+      debugPrint("🍎 APNS TOKEN: $apnsToken");
+    }
+
+    // 4. ✅ Now safely get FCM token
     String? token = await messaging.getToken();
     debugPrint("🔥 FCM TOKEN: $token");
 
-    // 🔄 Token refresh listener
+    // 5. Token refresh listener
     FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
       debugPrint("🔄 New Token: $newToken");
     });
 
-    // 3. Foreground messages
+    // 6. Foreground messages
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       debugPrint("🔔 Foreground Message: ${message.notification?.title}");
       if (message.notification != null) {
@@ -123,12 +142,12 @@ class _MyAppState extends State<MyApp> {
       }
     });
 
-    // 4. Background click
+    // 7. Background tap
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint("📲 Notification Clicked (Background): ${message.data}");
     });
 
-    // 5. Terminated state
+    // 8. Terminated state
     RemoteMessage? initialMessage =
         await FirebaseMessaging.instance.getInitialMessage();
     if (initialMessage != null) {
