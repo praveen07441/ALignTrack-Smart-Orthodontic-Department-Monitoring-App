@@ -1,25 +1,36 @@
 import UIKit
 import Flutter
-import Firebase // 🔥 1. Add this import
+import Firebase
+import UserNotifications   // ✅ REQUIRED
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, UNUserNotificationCenterDelegate {
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    
-    // 🔥 2. Initialize Firebase before the plugin registration
+
+    // ✅ Initialize Firebase
     if FirebaseApp.app() == nil {
         FirebaseApp.configure()
     }
-    
+
+    // ✅ Register plugins
     GeneratedPluginRegistrant.register(with: self)
-    
-    // 🔥 3. Register for remote notifications (Required for APNS token)
+
+    // ✅ Request notification permission
     if #available(iOS 10.0, *) {
-      UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
+      UNUserNotificationCenter.current().delegate = self
+      let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
+      UNUserNotificationCenter.current().requestAuthorization(
+        options: authOptions,
+        completionHandler: { _, _ in }
+      )
     }
+
+    // ✅ Register for remote notifications (IMPORTANT)
+    application.registerForRemoteNotifications()
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
