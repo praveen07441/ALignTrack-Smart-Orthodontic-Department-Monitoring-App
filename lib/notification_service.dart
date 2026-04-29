@@ -25,20 +25,31 @@ class NotificationService {
       await androidImpl?.requestNotificationsPermission();
       await androidImpl?.requestExactAlarmsPermission();
     } else if (Platform.isIOS) {
+      // For iOS, this triggers the native Apple "Allow Notifications" popup
       await _notifications
           .resolvePlatformSpecificImplementation<
               IOSFlutterLocalNotificationsPlugin>()
-          ?.requestPermissions(alert: true, badge: true, sound: true);
+          ?.requestPermissions(
+            alert: true,
+            badge: true,
+            sound: true,
+            critical: true, // Useful for urgent clinical alerts
+          );
     }
 
-    // 🔥 ALSO request FCM permission
-    await FirebaseMessaging.instance.requestPermission();
+    // 🔥 ALSO request FCM permission (Essential for APNS handshake)
+    await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
   }
 
   // ================= INIT =================
   Future<void> init() async {
     if (_isInitialized) return;
 
+    // Initialize Timezones for scheduling
     try {
       tz_data.initializeTimeZones();
       tz.setLocalLocation(tz.local);
@@ -50,6 +61,7 @@ class NotificationService {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
+    // Default iOS settings - permissions handled explicitly in requestPermissions()
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
@@ -60,17 +72,19 @@ class NotificationService {
       const InitializationSettings(android: androidSettings, iOS: iosSettings),
       onDidReceiveNotificationResponse: (details) {
         debugPrint("🔔 Notification tapped: ${details.payload}");
-        // 👉 You can navigate to chat screen here using NavigatorKey
+        // Navigation logic for clinical alerts or chat can be placed here
       },
     );
 
-    // 🔥 Create Notification Channel
+    // 🔥 Create Android Notification Channel
     if (Platform.isAndroid) {
       const channel = AndroidNotificationChannel(
         'clinical_reminders_v4',
         'Clinical Notifications',
-        description: 'App notifications',
+        description: 'Department monitoring and clinical updates',
         importance: Importance.max,
+        enableVibration: true,
+        playSound: true,
       );
 
       await _notifications
@@ -126,6 +140,8 @@ class NotificationService {
         presentAlert: true,
         presentBadge: true,
         presentSound: true,
+        interruptionLevel:
+            InterruptionLevel.active, // 🔥 Required for banners on iOS 15+
       ),
     );
   }
@@ -136,6 +152,7 @@ class NotificationService {
     required String body,
     String? payload,
   }) async {
+    // Using a safe ID generation
     final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
     await _notifications.show(
@@ -150,8 +167,8 @@ class NotificationService {
   // ================= TEST =================
   Future<void> testInstantNotification() async {
     await showNotification(
-      title: "🔔 Test",
-      body: "Notification working!",
+      title: "🔔 Test Notification",
+      body: "Alert system is operational!",
     );
   }
 
