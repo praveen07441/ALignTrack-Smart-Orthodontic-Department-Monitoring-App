@@ -14,41 +14,44 @@ import 'notification_service.dart';
 import 'firebase_options.dart';
 
 // ==========================================================
-// 🔥 REQUIRED for background notifications
+// 🔥 Background handler (ONLY Android will use it)
 // ==========================================================
 @pragma('vm:entry-point')
 Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
-  // Ensure Firebase is initialized in the background isolate
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  debugPrint("🔔 Background Message received: ${message.notification?.title}");
+
+  if (Platform.isAndroid) {
+    debugPrint("🔔 Background Message: ${message.notification?.title}");
+  }
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialize Firebase first
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    // 2. Register background handler AFTER Firebase init
-    FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+    // ✅ Only Android uses background messaging
+    if (Platform.isAndroid) {
+      FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
+    }
   } catch (e) {
-    debugPrint("Firebase Initialization Error: $e");
+    debugPrint("Firebase Init Error: $e");
   }
 
   runApp(const MyApp());
 }
 
-// 🎨 Global Theme Colors (Clean, Professional Minimalist)
+// 🎨 Theme
 class AppColors {
-  static const Color primary = Color(0xFFC8E6C9); // Soft Pale Green/Grey
-  static const Color background = Color(0xFFF1F8E9); // Light Mint/White
-  static const Color accentTeal = Color(0xFF00695C); // Deep Professional Teal
-  static const Color textDark = Color(0xFF2D3436); // Dark Slate Grey
+  static const Color primary = Color(0xFFC8E6C9);
+  static const Color background = Color(0xFFF1F8E9);
+  static const Color accentTeal = Color(0xFF00695C);
+  static const Color textDark = Color(0xFF2D3436);
 }
 
 class MyApp extends StatefulWidget {
@@ -65,88 +68,57 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
-    // Use addPostFrameCallback to ensure UI is ready before triggering logic
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      try {
-        // Initialize local notification settings
-        await NotificationService().init();
+    // ✅ Only run notifications on Android
+    if (Platform.isAndroid) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        try {
+          await NotificationService().init();
 
-        // Setup FCM and permissions
-        await _setupFCM();
+          await _setupFCM();
 
-        if (!_isFCMInitialized) {
-          NotificationService().setupFCMListeners();
-          _isFCMInitialized = true;
+          if (!_isFCMInitialized) {
+            NotificationService().setupFCMListeners();
+            _isFCMInitialized = true;
+          }
+        } catch (e) {
+          debugPrint("Notification Error: $e");
         }
-      } catch (e) {
-        debugPrint("Notification Setup Error: $e");
-      }
-    });
+      });
+    }
   }
 
-  // ================= 🔔 FCM SETUP =================
+  // ================= 🔔 ANDROID ONLY =================
   Future<void> _setupFCM() async {
+    if (!Platform.isAndroid) return;
+
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // 1. Request permission first (Crucial for iOS APNs handshake)
-    NotificationSettings settings = await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
+    // Request permission (safe for Android)
+    await messaging.requestPermission();
 
-    debugPrint("Permission Status: ${settings.authorizationStatus}");
-
-    if (settings.authorizationStatus == AuthorizationStatus.denied) {
-      debugPrint("❌ User declined notification permissions.");
-      return;
-    }
-
-    // 2. ✅ iOS Specific: Wait for APNS token before fetching FCM token
-    if (Platform.isIOS) {
-      debugPrint("🍎 iOS detected. Waiting for APNS token...");
-
-      String? apnsToken;
-      // Increased retry logic for physical hardware
-      for (int i = 0; i < 15; i++) {
-        apnsToken = await messaging.getAPNSToken();
-        if (apnsToken != null) break;
-
-        debugPrint("⏳ Still waiting for APNS token... attempt ${i + 1}");
-        await Future.delayed(const Duration(seconds: 2));
-      }
-
-      if (apnsToken == null) {
-        debugPrint(
-            "❌ CRITICAL: APNS token not found. Push notifications will fail on this device.");
-        return;
-      }
-      debugPrint("✅ APNS TOKEN RECEIVED: $apnsToken");
-    }
-
-    // 3. Manually enable FCM auto-init
+    // Enable FCM
     await messaging.setAutoInitEnabled(true);
 
-    // 4. ✅ Fetch FCM Token
+    // Get token
     String? token = await messaging.getToken();
     debugPrint("🔥 FCM TOKEN: $token");
 
-    // 5. Set foreground presentation options
+    // Foreground settings
     await messaging.setForegroundNotificationPresentationOptions(
       alert: true,
       badge: true,
       sound: true,
     );
 
-    // 6. Token refresh listener
+    // Token refresh
     FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
-      debugPrint("🔄 FCM Token Refreshed: $newToken");
+      debugPrint("🔄 Token Refreshed: $newToken");
     });
 
-    // 7. Foreground messages listener
+    // Foreground messages
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      debugPrint("🔔 Foreground Message: ${message.notification?.title}");
+      debugPrint("🔔 Message: ${message.notification?.title}");
+
       if (message.notification != null) {
         NotificationService().showNotification(
           title: message.notification!.title ?? "New Notification",
@@ -156,16 +128,15 @@ class _MyAppState extends State<MyApp> {
       }
     });
 
-    // 8. Interaction: When app is in background but opened via notification
+    // Background open
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      debugPrint("📲 App opened from notification: ${message.data}");
+      debugPrint("📲 Opened from notification");
     });
 
-    // 9. Interaction: When app is terminated and opened via notification
+    // Terminated state
     RemoteMessage? initialMessage = await messaging.getInitialMessage();
     if (initialMessage != null) {
-      debugPrint(
-          "🚀 App launched from terminated state: ${initialMessage.data}");
+      debugPrint("🚀 Opened from terminated state");
     }
   }
 

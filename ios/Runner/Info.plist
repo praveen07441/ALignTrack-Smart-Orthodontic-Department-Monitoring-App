@@ -68,12 +68,8 @@
     <key>UIViewControllerBasedStatusBarAppearance</key>
     <false/>
 
-    <!-- FIREBASE: DISABLE METHOD SWIZZLING (fixes EXC_BAD_ACCESS crash) -->
+    <!-- FIREBASE -->
     <key>FirebaseAppDelegateProxyEnabled</key>
-    <false/>
-
-    <!-- FIREBASE: DISABLE AUTO APNS REGISTRATION (handle manually in code) -->
-    <key>FirebaseMessagingAutoInitEnabled</key>
     <false/>
 
     <!-- CAMERA + MEDIA PERMISSIONS -->
@@ -89,26 +85,19 @@
     <key>NSMicrophoneUsageDescription</key>
     <string>ALignTrack requires microphone access if you record video notes during clinical sessions.</string>
 
-    <!-- FILE / URL ACCESS (FOR OPENING FILES LIKE PDF) -->
+    <!-- FILE / URL ACCESS -->
     <key>LSApplicationQueriesSchemes</key>
     <array>
         <string>http</string>
         <string>https</string>
     </array>
 
-    <!-- NETWORK (ALLOW FIREBASE + STORAGE URLS) -->
+    <!-- NETWORK -->
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>
         <true/>
     </dict>
-
-    <!-- PUSH NOTIFICATIONS -->
-    <key>UIBackgroundModes</key>
-    <array>
-        <string>fetch</string>
-        <string>remote-notification</string>
-    </array>
 
     <!-- GOOGLE SIGN-IN / FIREBASE URL SCHEME -->
     <key>CFBundleURLTypes</key>

@@ -17,39 +17,11 @@ class NotificationService {
 
   bool _isInitialized = false;
 
-  // ================= PERMISSIONS =================
-  Future<void> requestPermissions() async {
-    if (Platform.isAndroid) {
-      final androidImpl = _notifications.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
-      await androidImpl?.requestNotificationsPermission();
-      await androidImpl?.requestExactAlarmsPermission();
-    } else if (Platform.isIOS) {
-      // For iOS, this triggers the native Apple "Allow Notifications" popup
-      await _notifications
-          .resolvePlatformSpecificImplementation<
-              IOSFlutterLocalNotificationsPlugin>()
-          ?.requestPermissions(
-            alert: true,
-            badge: true,
-            sound: true,
-            critical: true, // Useful for urgent clinical alerts
-          );
-    }
-
-    // 🔥 ALSO request FCM permission (Essential for APNS handshake)
-    await FirebaseMessaging.instance.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-  }
-
   // ================= INIT =================
   Future<void> init() async {
+    if (!Platform.isAndroid) return; // ❌ Skip iOS completely
     if (_isInitialized) return;
 
-    // Initialize Timezones for scheduling
     try {
       tz_data.initializeTimeZones();
       tz.setLocalLocation(tz.local);
@@ -61,45 +33,36 @@ class NotificationService {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    // Default iOS settings - permissions handled explicitly in requestPermissions()
-    const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
-      requestSoundPermission: false,
-    );
-
     await _notifications.initialize(
-      const InitializationSettings(android: androidSettings, iOS: iosSettings),
+      const InitializationSettings(android: androidSettings),
       onDidReceiveNotificationResponse: (details) {
         debugPrint("🔔 Notification tapped: ${details.payload}");
-        // Navigation logic for clinical alerts or chat can be placed here
       },
     );
 
-    // 🔥 Create Android Notification Channel
-    if (Platform.isAndroid) {
-      const channel = AndroidNotificationChannel(
-        'clinical_reminders_v4',
-        'Clinical Notifications',
-        description: 'Department monitoring and clinical updates',
-        importance: Importance.max,
-        enableVibration: true,
-        playSound: true,
-      );
+    // ✅ Android Notification Channel
+    const channel = AndroidNotificationChannel(
+      'clinical_reminders_v4',
+      'Clinical Notifications',
+      description: 'Department monitoring and clinical updates',
+      importance: Importance.max,
+      enableVibration: true,
+      playSound: true,
+    );
 
-      await _notifications
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(channel);
-    }
+    await _notifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
 
     _isInitialized = true;
-    debugPrint("✅ Notification Service Initialized");
+    debugPrint("✅ Notification Service Initialized (Android only)");
   }
 
   // ================= FCM LISTENER =================
   void setupFCMListeners() {
-    // 🔔 Foreground messages
+    if (!Platform.isAndroid) return;
+
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       final notification = message.notification;
 
@@ -112,12 +75,10 @@ class NotificationService {
       }
     });
 
-    // 🔔 Background click
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint("📲 Opened from background: ${message.data}");
     });
 
-    // 🔔 Terminated state
     FirebaseMessaging.instance.getInitialMessage().then((message) {
       if (message != null) {
         debugPrint("🚀 Opened from terminated: ${message.data}");
@@ -125,7 +86,7 @@ class NotificationService {
     });
   }
 
-  // ================= COMMON SETTINGS =================
+  // ================= SETTINGS =================
   NotificationDetails _getDetails() {
     return NotificationDetails(
       android: AndroidNotificationDetails(
@@ -134,25 +95,19 @@ class NotificationService {
         importance: Importance.max,
         priority: Priority.high,
         playSound: true,
-        vibrationPattern: Int64List.fromList([0, 500, 200, 500]),
-      ),
-      iOS: const DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-        interruptionLevel:
-            InterruptionLevel.active, // 🔥 Required for banners on iOS 15+
+        vibrationPattern: Int64List.fromList(const [0, 500, 200, 500]),
       ),
     );
   }
 
-  // ================= 🔔 SHOW NOTIFICATION =================
+  // ================= SHOW =================
   Future<void> showNotification({
     required String title,
     required String body,
     String? payload,
   }) async {
-    // Using a safe ID generation
+    if (!Platform.isAndroid) return;
+
     final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
     await _notifications.show(
@@ -166,6 +121,8 @@ class NotificationService {
 
   // ================= TEST =================
   Future<void> testInstantNotification() async {
+    if (!Platform.isAndroid) return;
+
     await showNotification(
       title: "🔔 Test Notification",
       body: "Alert system is operational!",
@@ -179,6 +136,8 @@ class NotificationService {
     required String body,
     required DateTime scheduledTime,
   }) async {
+    if (!Platform.isAndroid) return;
+
     final scheduledTZTime = tz.TZDateTime.from(scheduledTime, tz.local);
 
     if (scheduledTZTime.isBefore(tz.TZDateTime.now(tz.local))) {
@@ -198,11 +157,14 @@ class NotificationService {
     );
   }
 
+  // ================= CANCEL =================
   Future<void> cancelNotification(int id) async {
+    if (!Platform.isAndroid) return;
     await _notifications.cancel(id);
   }
 
   Future<void> cancelAll() async {
+    if (!Platform.isAndroid) return;
     await _notifications.cancelAll();
   }
 }
