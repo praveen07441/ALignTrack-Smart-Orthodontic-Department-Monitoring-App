@@ -99,7 +99,7 @@ class _HodDashboardState extends State<HodDashboard> {
                 )));
   }
 
-  // ================= ✅ PRODUCTION PDF EXPORT (LAYOUT FIXED) =================
+  // ================= ✅ PRODUCTION PDF EXPORT (UPDATED) =================
   Future<void> exportMonthlyPDF() async {
     setState(() => isExporting = true);
     try {
@@ -164,7 +164,7 @@ class _HodDashboardState extends State<HodDashboard> {
         }
       }
 
-      const int rowsPerPage = 20; // Adjusted for better multi-line row fit
+      const int rowsPerPage = 20;
       for (int i = 0; i < masterData.length; i += rowsPerPage) {
         final chunk = masterData.sublist(
             i,
@@ -176,7 +176,7 @@ class _HodDashboardState extends State<HodDashboard> {
           pageFormat: PdfPageFormat.a4.landscape,
           margin: const pw.EdgeInsets.all(32),
           header: (context) => pw.Column(children: [
-            pw.Text("DEPARTMENT MONITORING MASTER REPORT",
+            pw.Text("DEPARTMENT ACTIVITY REPORT", // ✅ Header Updated
                 style: pw.TextStyle(
                     fontWeight: pw.FontWeight.bold,
                     fontSize: 16,
@@ -224,9 +224,13 @@ class _HodDashboardState extends State<HodDashboard> {
           ),
         ));
       }
+
+      // ✅ FIXED: Save bytes first to prevent iOS Layout errors
+      final pdfBytes = await pdf.save();
+
       await Printing.layoutPdf(
-          onLayout: (format) async => pdf.save(),
-          name: 'Master_Report_$formattedDate');
+          onLayout: (format) async => pdfBytes,
+          name: 'Department_Activity_Report_$formattedDate'); // ✅ Name Updated
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)
@@ -236,7 +240,7 @@ class _HodDashboardState extends State<HodDashboard> {
     }
   }
 
-  // ================= ✅ MONITORING UI =================
+  // ================= ✅ MONITORING UI (Features Preserved) =================
   Widget _buildMonitoringCategory(String title, String role) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -438,7 +442,6 @@ class _HodDashboardState extends State<HodDashboard> {
         ]),
       );
 
-  // ================= ✅ APP BAR & SMART BADGE =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(

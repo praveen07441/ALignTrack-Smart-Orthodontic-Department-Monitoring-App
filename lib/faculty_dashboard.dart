@@ -53,7 +53,6 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
   }
 
   // ================= ✅ SMART CHAT & BADGE RESET LOGIC =================
-
   Future<void> _markMessagesAsSeen() async {
     try {
       final snapshot =
@@ -65,7 +64,6 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
         final data = doc.data();
         final seenBy = List.from(data['seenBy'] ?? []);
 
-        // Logic check: Is this a group message or a private message for THIS Faculty?
         bool isRelevant = data['type'] == 'group' ||
             (data['type'] == 'hod' && data['targetUserId'] == widget.userId);
 
@@ -151,8 +149,8 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
                 icon: const Icon(Icons.chat_bubble_outline,
                     color: Colors.black, size: 26),
                 onPressed: () async {
-                  await _markMessagesAsSeen(); // ✅ Clear notification numbers
-                  _getHodAndNavigate(); // ✅ Go to chat
+                  await _markMessagesAsSeen();
+                  _getHodAndNavigate();
                 }),
             if (unreadCount > 0)
               Positioned(
@@ -179,8 +177,7 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
     );
   }
 
-  // ================= ✅ PDF EXPORT LOGIC =================
-
+  // ================= ✅ PDF EXPORT LOGIC (iOS FIXED) =================
   Future<void> _exportMonthlyFacultyPDF() async {
     setState(() => isExporting = true);
     try {
@@ -285,8 +282,11 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
                         fontSize: 8, color: PdfColors.grey600)),
               )));
 
+      // ✅ FIXED: Pre-save bytes to variable for iOS compatibility
+      final pdfBytes = await pdf.save();
+
       await Printing.layoutPdf(
-          onLayout: (format) async => pdf.save(), name: 'Faculty_Monthly_Log');
+          onLayout: (format) async => pdfBytes, name: 'Faculty_Monthly_Log');
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)
@@ -537,7 +537,7 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
   }
 }
 
-// ================= FACULTY ENTRY SCREEN =================
+// ================= FACULTY ENTRY SCREEN (Features Preserved) =================
 class FacultyEntryScreen extends StatefulWidget {
   final String userId, userName, slot, date;
   const FacultyEntryScreen(

@@ -42,21 +42,12 @@ class _PgDashboardState extends State<PgDashboard> {
 
   String get formattedDate => DateFormat('yyyy-MM-dd').format(selectedDate);
 
-  @override
-  void initState() {
-    super.initState();
-  }
-
   // ================= ✅ OPTIMIZED MARK AS SEEN =================
-  // ✅ FIX: Two separate filtered queries instead of fetching ALL messages
-  // ⚡ Fast | 💰 Cheaper | 📈 Scalable
-
   Future<void> _markMessagesAsSeen() async {
     try {
       final batch = FirebaseFirestore.instance.batch();
       bool hasUpdates = false;
 
-      // ✅ Query 1: Only group messages not yet seen by this user
       final groupSnapshot = await FirebaseFirestore.instance
           .collection('chat')
           .where('type', isEqualTo: 'group')
@@ -64,7 +55,7 @@ class _PgDashboardState extends State<PgDashboard> {
 
       for (var doc in groupSnapshot.docs) {
         final data = doc.data();
-        if (data['userId'] == widget.userId) continue; // skip own messages
+        if (data['userId'] == widget.userId) continue;
         final seenBy = List.from(data['seenBy'] ?? []);
         if (!seenBy.contains(widget.userId)) {
           batch.update(doc.reference, {
@@ -74,7 +65,6 @@ class _PgDashboardState extends State<PgDashboard> {
         }
       }
 
-      // ✅ Query 2: Only HOD messages targeted to this user
       final hodSnapshot = await FirebaseFirestore.instance
           .collection('chat')
           .where('type', isEqualTo: 'hod')
@@ -83,7 +73,7 @@ class _PgDashboardState extends State<PgDashboard> {
 
       for (var doc in hodSnapshot.docs) {
         final data = doc.data();
-        if (data['userId'] == widget.userId) continue; // skip own messages
+        if (data['userId'] == widget.userId) continue;
         final seenBy = List.from(data['seenBy'] ?? []);
         if (!seenBy.contains(widget.userId)) {
           batch.update(doc.reference, {
@@ -100,7 +90,6 @@ class _PgDashboardState extends State<PgDashboard> {
   }
 
   // ================= ✅ NAVIGATE TO CHAT =================
-
   Future<void> _getHodAndNavigate() async {
     try {
       final hodQuery = await FirebaseFirestore.instance
@@ -119,8 +108,7 @@ class _PgDashboardState extends State<PgDashboard> {
       }
 
       final String hodUid = hodQuery.docs.first.id;
-      final String hodName =
-          hodQuery.docs.first.data()['name'] ?? 'HOD'; // ✅ Real HOD name
+      final String hodName = hodQuery.docs.first.data()['name'] ?? 'HOD';
 
       if (!mounted) return;
       Navigator.push(
@@ -130,8 +118,8 @@ class _PgDashboardState extends State<PgDashboard> {
             userId: widget.userId,
             userName: widget.userName,
             role: "PG",
-            targetUserId: hodUid, // ✅ HOD's UID → HOD gets notified
-            targetUserName: hodName, // ✅ Real name, no "Desk Desk" issue
+            targetUserId: hodUid,
+            targetUserName: hodName,
           ),
         ),
       );
@@ -145,18 +133,14 @@ class _PgDashboardState extends State<PgDashboard> {
   }
 
   // ================= ✅ OPTIMIZED CHAT BADGE COUNTER =================
-  // ✅ FIX: Filtered stream instead of fetching all chat docs
-
   Widget _buildChatIcon() {
     return StreamBuilder<QuerySnapshot>(
-      // ✅ Only listen to group messages — HOD messages handled separately
       stream: FirebaseFirestore.instance
           .collection('chat')
           .where('type', isEqualTo: 'group')
           .snapshots(),
       builder: (context, groupSnap) {
         return StreamBuilder<QuerySnapshot>(
-          // ✅ Only listen to HOD messages targeted to this user
           stream: FirebaseFirestore.instance
               .collection('chat')
               .where('type', isEqualTo: 'hod')
@@ -165,7 +149,6 @@ class _PgDashboardState extends State<PgDashboard> {
           builder: (context, hodSnap) {
             int unreadCount = 0;
 
-            // Count unread group messages
             if (groupSnap.hasData) {
               for (var doc in groupSnap.data!.docs) {
                 final data = doc.data() as Map<String, dynamic>;
@@ -175,7 +158,6 @@ class _PgDashboardState extends State<PgDashboard> {
               }
             }
 
-            // Count unread HOD messages
             if (hodSnap.hasData) {
               for (var doc in hodSnap.data!.docs) {
                 final data = doc.data() as Map<String, dynamic>;
@@ -222,8 +204,7 @@ class _PgDashboardState extends State<PgDashboard> {
     );
   }
 
-  // ================= ✅ PDF EXPORT LOGIC =================
-
+  // ================= ✅ PDF EXPORT LOGIC (FIXED FOR iOS) =================
   Future<void> _exportMonthlyPGPDF() async {
     setState(() => isExporting = true);
     try {
@@ -331,9 +312,11 @@ class _PgDashboardState extends State<PgDashboard> {
                         fontSize: 8, color: PdfColors.grey600)),
               )));
 
+      // ✅ FIX: Save bytes first to prevent iOS Layout errors
+      final pdfBytes = await pdf.save();
+
       await Printing.layoutPdf(
-          onLayout: (format) async => pdf.save(),
-          name: 'PG_Clinical_Log_Report');
+          onLayout: (format) async => pdfBytes, name: 'PG_Clinical_Log_Report');
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)
@@ -582,7 +565,7 @@ class _PgDashboardState extends State<PgDashboard> {
   }
 }
 
-// ================= ENTRY SCREEN =================
+// ================= ENTRY SCREEN (Features Preserved) =================
 class EntryScreen extends StatefulWidget {
   final String userId, userName, slot, role, selectedDate;
   const EntryScreen(

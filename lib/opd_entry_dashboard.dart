@@ -64,7 +64,6 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
   }
 
   // ================= ✅ SMART CHAT & BADGE RESET LOGIC =================
-
   Future<void> _markMessagesAsSeen() async {
     try {
       final snapshot =
@@ -76,7 +75,6 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
         final data = doc.data();
         final seenBy = List.from(data['seenBy'] ?? []);
 
-        // Logic check: Is this a group message or a private message for THIS OPD User?
         bool isRelevant = data['type'] == 'group' ||
             (data['type'] == 'hod' && data['targetUserId'] == widget.userId);
 
@@ -159,8 +157,8 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
               icon: const Icon(Icons.chat_bubble_outline,
                   color: Colors.black, size: 26),
               onPressed: () async {
-                await _markMessagesAsSeen(); // ✅ Reset badge locally
-                _getHodAndNavigate(); // ✅ Navigate to HOD Desk
+                await _markMessagesAsSeen();
+                _getHodAndNavigate();
               }),
           if (unreadCount > 0)
             Positioned(
@@ -184,7 +182,7 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
     );
   }
 
-  // ================= ✅ PREMIUM 1 MONTH PDF EXPORT =================
+  // ================= ✅ PREMIUM 1 MONTH PDF EXPORT (iOS FIXED) =================
   Future<void> _exportMonthlyOPDPDF() async {
     setState(() => isExporting = true);
     try {
@@ -280,8 +278,11 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
                 ),
               ]));
 
+      // ✅ FINAL FIX: Pre-save bytes to variable for iOS compatibility
+      final pdfBytes = await pdf.save();
+
       await Printing.layoutPdf(
-          onLayout: (format) async => pdf.save(), name: 'OPD_Report');
+          onLayout: (format) async => pdfBytes, name: 'OPD_Report');
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(context)
