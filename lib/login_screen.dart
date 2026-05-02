@@ -1,8 +1,9 @@
+import 'dart:io'; // ✅ Added to handle platform-specific logic
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_messaging/firebase_messaging.dart'; // ✅ Added for Notifications
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 // Dashboard Imports
 import 'pg_dashboard.dart';
@@ -36,7 +37,6 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ Safely load credentials on startup
     _loadSavedCredentials();
   }
 
@@ -47,7 +47,6 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ✅ Optimized local storage loading
   Future<void> _loadSavedCredentials() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -67,7 +66,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ✅ Handles storage logic based on the Remember Me flag
   Future<void> _handleRememberMe() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -110,12 +108,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
       User user = userCredential.user!;
 
-      // 🔔 SAVE FCM TOKEN (For Notifications)
-      String? fcmToken = await FirebaseMessaging.instance.getToken();
-      if (fcmToken != null) {
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'fcmToken': fcmToken,
-        }, SetOptions(merge: true));
+      // 🔔 SAVE FCM TOKEN (Optimized for iOS/Android compatibility)
+      // Only runs on Android to avoid APNs/Permission errors on iOS login
+      if (Platform.isAndroid) {
+        String? fcmToken = await FirebaseMessaging.instance.getToken();
+        if (fcmToken != null) {
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .set({
+            'fcmToken': fcmToken,
+          }, SetOptions(merge: true));
+        }
       }
 
       // 2. Database Role Fetch
@@ -132,7 +136,7 @@ class _LoginScreenState extends State<LoginScreen> {
       String role = doc['role'].toString().trim();
       String name = doc['name'] ?? "User";
 
-      // 3. Strict Role Verification (Case-Insensitive)
+      // 3. Strict Role Verification
       if (role.toLowerCase() != selectedRole.toLowerCase()) {
         await _auth.signOut();
         throw Exception(
@@ -141,7 +145,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
 
-      // 4. Clean Navigation to Dashboards (Clears stack for iOS stability)
+      // 4. Clean Navigation to Dashboards
       Widget targetPage;
       if (role == "PG") {
         targetPage = PgDashboard(userId: user.uid, userName: name);
@@ -244,7 +248,6 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               children: [
                 const SizedBox(height: 10),
-                // LOGOS
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -284,8 +287,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 const Text("Login to continue",
                     style: TextStyle(color: Colors.grey, fontSize: 14)),
                 const SizedBox(height: 25),
-
-                // LOGIN CARD
                 Container(
                   padding: const EdgeInsets.all(22),
                   decoration: BoxDecoration(
@@ -303,8 +304,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       inputField(
                           "Password", passwordController, Icons.lock_outline,
                           isPassword: true),
-
-                      // Remember Me Checkbox
                       Row(
                         children: [
                           SizedBox(
@@ -324,7 +323,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         ],
                       ),
                       const SizedBox(height: 15),
-
                       const Align(
                         alignment: Alignment.centerLeft,
                         child: Padding(
@@ -338,7 +336,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       roleDropdown(),
                       const SizedBox(height: 10),
-
                       SizedBox(
                         width: double.infinity,
                         height: 50,
@@ -362,11 +359,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                       letterSpacing: 1.1)),
                         ),
                       ),
-
                       const SizedBox(height: 20),
                       const Divider(color: Colors.black12, thickness: 1),
                       const SizedBox(height: 12),
-
                       const Text("Design: Dr. Ashish Sunny",
                           style: TextStyle(
                               fontSize: 11,
