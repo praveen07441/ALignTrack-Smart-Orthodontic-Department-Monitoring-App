@@ -99,9 +99,10 @@ class _HodDashboardState extends State<HodDashboard> {
                 )));
   }
 
-  // ================= ✅ PRODUCTION PDF EXPORT (UPDATED) =================
+  // ================= ✅ 100% STABLE PDF EXPORT =================
   Future<void> exportMonthlyPDF() async {
     setState(() => isExporting = true);
+
     try {
       final pdf = pw.Document();
       DateTime endDate = selectedDate;
@@ -116,39 +117,46 @@ class _HodDashboardState extends State<HodDashboard> {
           .get();
 
       if (snapshot.docs.isEmpty) {
-        if (mounted)
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text("No records found.")));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("No records found.")),
+          );
+        }
         return;
       }
 
       List<List<String>> masterData = [];
       int serialNo = 1;
+
       for (var doc in snapshot.docs) {
-        final data = doc.data();
+        final data = doc.data() as Map<String, dynamic>;
         final name = data['userName'] ?? 'Unknown';
         final role = data['role'] ?? '-';
         final date = data['date'] ?? '-';
 
         if (role == "PG") {
-          for (var p in (data['patients'] as List? ?? [])) {
+          final patients =
+              List<Map<String, dynamic>>.from(data['patients'] ?? []);
+          for (var p in patients) {
             masterData.add([
               "${serialNo++}",
               "$date",
-              name,
+              "$name",
               "PG Clinical",
-              "Pt: ${p['patientName']}\nOP: ${p['opNumber']}",
-              "Staff: ${p['staffName']}\nProc: ${safeText(p['procedure'])}"
+              "Pt: ${safeText(p['patientName'])} | OP: ${safeText(p['opNumber'])}",
+              "Staff: ${safeText(p['staffName'])} | Proc: ${safeText(p['procedure'])}"
             ]);
           }
         } else if (role == "Faculty") {
-          for (var w in (data['workEntries'] as List? ?? [])) {
+          final workEntries =
+              List<Map<String, dynamic>>.from(data['workEntries'] ?? []);
+          for (var w in workEntries) {
             masterData.add([
               "${serialNo++}",
               "$date",
-              name,
+              "$name",
               "Faculty",
-              "Cat: ${w['category']}",
+              "Cat: ${safeText(w['category'])}",
               "Details: ${safeText(w['details'])}"
             ]);
           }
@@ -156,33 +164,31 @@ class _HodDashboardState extends State<HodDashboard> {
           masterData.add([
             "${serialNo++}",
             "$date",
-            name,
+            "$name",
             "OPD Unit",
-            "Pt: ${data['patientName']}\nOP: ${data['opNumber']}",
-            "PG: ${data['pgStudentName']}\nDiag: ${safeText(data['diagnosis'])}"
+            "Pt: ${safeText(data['patientName'])} | OP: ${safeText(data['opNumber'])}",
+            "PG: ${safeText(data['pgStudentName'])} | Diag: ${safeText(data['diagnosis'])}"
           ]);
         }
       }
 
-      const int rowsPerPage = 20;
-      for (int i = 0; i < masterData.length; i += rowsPerPage) {
-        final chunk = masterData.sublist(
-            i,
-            i + rowsPerPage > masterData.length
-                ? masterData.length
-                : i + rowsPerPage);
+      // ✅ Memory Guard: Prevents OOM crashes on mobile
+      if (masterData.length > 500) {
+        masterData = masterData.take(500).toList();
+      }
 
-        pdf.addPage(pw.MultiPage(
+      pdf.addPage(
+        pw.MultiPage(
           pageFormat: PdfPageFormat.a4.landscape,
-          margin: const pw.EdgeInsets.all(32),
+          margin: const pw.EdgeInsets.all(24),
           header: (context) => pw.Column(children: [
-            pw.Text("DEPARTMENT ACTIVITY REPORT", // ✅ Header Updated
+            pw.Text("DEPARTMENT ACTIVITY REPORT",
                 style: pw.TextStyle(
                     fontWeight: pw.FontWeight.bold,
                     fontSize: 16,
                     color: PdfColors.teal900)),
             pw.SizedBox(height: 5),
-            pw.Divider(color: PdfColors.teal, thickness: 1),
+            pw.Divider(thickness: 1.5, color: PdfColors.teal900),
             pw.SizedBox(height: 10),
           ]),
           build: (context) => [
@@ -192,10 +198,10 @@ class _HodDashboardState extends State<HodDashboard> {
                 "Date",
                 "User",
                 "Log Type",
-                "Details (Primary)",
-                "Details (Secondary)"
+                "Primary Details",
+                "Secondary Details"
               ],
-              data: chunk,
+              data: masterData,
               headerDecoration:
                   const pw.BoxDecoration(color: PdfColors.teal900),
               headerStyle: pw.TextStyle(
@@ -203,44 +209,53 @@ class _HodDashboardState extends State<HodDashboard> {
                   fontWeight: pw.FontWeight.bold,
                   fontSize: 9),
               cellStyle: const pw.TextStyle(fontSize: 8),
-              cellAlignment: pw.Alignment.centerLeft,
-              cellHeight: 30,
+              cellAlignment: pw.Alignment.centerLeft, // ✅ Fixes layout shifting
+              cellHeight: 28, // ✅ Stable row height
               columnWidths: {
-                0: const pw.FixedColumnWidth(30),
-                1: const pw.FixedColumnWidth(60),
-                2: const pw.FixedColumnWidth(70),
-                3: const pw.FixedColumnWidth(65),
-                4: const pw.FixedColumnWidth(140),
-                5: const pw.FixedColumnWidth(230),
+                0: const pw.FixedColumnWidth(25),
+                1: const pw.FixedColumnWidth(55),
+                2: const pw.FixedColumnWidth(65),
+                3: const pw.FixedColumnWidth(60),
+                4: const pw.FixedColumnWidth(130),
+                5: const pw.FixedColumnWidth(160),
               },
             ),
           ],
-          footer: (context) => pw.Container(
+          footer: (context) => pw.Align(
             alignment: pw.Alignment.centerRight,
-            padding: const pw.EdgeInsets.only(top: 10),
             child: pw.Text(
                 "Page ${context.pageNumber} of ${context.pagesCount}",
                 style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey)),
           ),
-        ));
-      }
+        ),
+      );
 
-      // ✅ FIXED: Save bytes first to prevent iOS Layout errors
       final pdfBytes = await pdf.save();
 
-      await Printing.layoutPdf(
+      // ✅ Cross-platform logic: share for iOS to avoid native preview hangs
+      if (Platform.isIOS) {
+        await Printing.sharePdf(
+          bytes: pdfBytes,
+          filename: 'Dept_Report_$formattedDate.pdf',
+        );
+      } else {
+        await Printing.layoutPdf(
           onLayout: (format) async => pdfBytes,
-          name: 'Department_Activity_Report_$formattedDate'); // ✅ Name Updated
+          name: 'Dept_Report_$formattedDate',
+        );
+      }
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text("PDF Error: $e")));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("PDF Error: $e")),
+        );
+      }
     } finally {
       if (mounted) setState(() => isExporting = false);
     }
   }
 
-  // ================= ✅ MONITORING UI (Features Preserved) =================
+  // ================= ✅ MONITORING UI =================
   Widget _buildMonitoringCategory(String title, String role) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
