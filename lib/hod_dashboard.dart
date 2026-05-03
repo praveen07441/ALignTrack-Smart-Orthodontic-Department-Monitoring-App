@@ -34,10 +34,20 @@ class _HodDashboardState extends State<HodDashboard> {
 
   String get formattedDate => DateFormat('yyyy-MM-dd').format(selectedDate);
 
-  // Helper: Prevents PDF crashes by limiting text length in cells
+  // Helper: Prevents PDF crashes by limiting text length
   String safeText(String? text, {int limit = 100}) {
     if (text == null || text.isEmpty) return "-";
     return text.length > limit ? "${text.substring(0, limit)}..." : text;
+  }
+
+  // ✅ Improvement 1: Safe Date Parser to prevent crashes on bad data
+  DateTime _parseSafeDate(String dateStr) {
+    try {
+      return DateFormat('yyyy-MM-dd').parse(dateStr);
+    } catch (e) {
+      debugPrint("Date Parsing Error: $dateStr - $e");
+      return DateTime(2000); // Safe fallback for sorting
+    }
   }
 
   // ================= ✅ STABLE UNREAD RESET LOGIC =================
@@ -99,14 +109,14 @@ class _HodDashboardState extends State<HodDashboard> {
                 )));
   }
 
-  // ================= ✅ 100% STABLE PDF EXPORT =================
-  Future<void> exportMonthlyPDF() async {
+  // ================= ✅ DYNAMIC PDF EXPORT LOGIC =================
+  Future<void> exportPDF(int days) async {
     setState(() => isExporting = true);
 
     try {
       final pdf = pw.Document();
       DateTime endDate = selectedDate;
-      DateTime startDate = endDate.subtract(const Duration(days: 30));
+      DateTime startDate = endDate.subtract(Duration(days: days));
 
       final snapshot = await FirebaseFirestore.instance
           .collection('department_entries')
@@ -119,17 +129,16 @@ class _HodDashboardState extends State<HodDashboard> {
       if (snapshot.docs.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("No records found.")),
+            const SnackBar(content: Text("No records found for this range.")),
           );
         }
         return;
       }
 
       List<List<String>> masterData = [];
-      int serialNo = 1;
 
       for (var doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
+        final data = doc.data();
         final name = data['userName'] ?? 'Unknown';
         final role = data['role'] ?? '-';
         final date = data['date'] ?? '-';
@@ -139,7 +148,7 @@ class _HodDashboardState extends State<HodDashboard> {
               List<Map<String, dynamic>>.from(data['patients'] ?? []);
           for (var p in patients) {
             masterData.add([
-              "${serialNo++}",
+              "", // Serial placeholder
               "$date",
               "$name",
               "PG Clinical",
@@ -152,7 +161,7 @@ class _HodDashboardState extends State<HodDashboard> {
               List<Map<String, dynamic>>.from(data['workEntries'] ?? []);
           for (var w in workEntries) {
             masterData.add([
-              "${serialNo++}",
+              "",
               "$date",
               "$name",
               "Faculty",
@@ -162,7 +171,7 @@ class _HodDashboardState extends State<HodDashboard> {
           }
         } else if (role == "OPD Entry") {
           masterData.add([
-            "${serialNo++}",
+            "",
             "$date",
             "$name",
             "OPD Unit",
@@ -172,9 +181,23 @@ class _HodDashboardState extends State<HodDashboard> {
         }
       }
 
-      // ✅ Memory Guard: Prevents OOM crashes on mobile
-      if (masterData.length > 500) {
-        masterData = masterData.take(500).toList();
+      // ✅ STEP 5: SORTING (Latest First) with Safe Date Parsing
+      masterData.sort((a, b) {
+        DateTime dateA = _parseSafeDate(a[1]);
+        DateTime dateB = _parseSafeDate(b[1]);
+        return dateB.compareTo(dateA);
+      });
+
+      // ✅ STEP 6: ADAPTIVE LIMIT (Improvement 2)
+      // Tighten limit for 2-month ranges to maintain speed on old hardware
+      int adaptiveLimit = days > 30 ? 300 : 500;
+      if (masterData.length > adaptiveLimit) {
+        masterData = masterData.take(adaptiveLimit).toList();
+      }
+
+      // ✅ RE-ASSIGN SERIAL NUMBERS
+      for (int i = 0; i < masterData.length; i++) {
+        masterData[i][0] = "${i + 1}";
       }
 
       pdf.addPage(
@@ -187,6 +210,15 @@ class _HodDashboardState extends State<HodDashboard> {
                     fontWeight: pw.FontWeight.bold,
                     fontSize: 16,
                     color: PdfColors.teal900)),
+            pw.SizedBox(height: 4),
+            pw.Text(
+              "${DateFormat('dd MMM yyyy').format(startDate)}  →  ${DateFormat('dd MMM yyyy').format(endDate)}",
+              style: pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+            ),
+            pw.SizedBox(height: 4),
+            if (masterData.length >= adaptiveLimit)
+              pw.Text("(Showing latest $adaptiveLimit records for stability)",
+                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.red)),
             pw.SizedBox(height: 5),
             pw.Divider(thickness: 1.5, color: PdfColors.teal900),
             pw.SizedBox(height: 10),
@@ -209,8 +241,8 @@ class _HodDashboardState extends State<HodDashboard> {
                   fontWeight: pw.FontWeight.bold,
                   fontSize: 9),
               cellStyle: const pw.TextStyle(fontSize: 8),
-              cellAlignment: pw.Alignment.centerLeft, // ✅ Fixes layout shifting
-              cellHeight: 28, // ✅ Stable row height
+              cellAlignment: pw.Alignment.centerLeft,
+              cellHeight: 22,
               columnWidths: {
                 0: const pw.FixedColumnWidth(25),
                 1: const pw.FixedColumnWidth(55),
@@ -232,30 +264,61 @@ class _HodDashboardState extends State<HodDashboard> {
 
       final pdfBytes = await pdf.save();
 
-      // ✅ Cross-platform logic: share for iOS to avoid native preview hangs
       if (Platform.isIOS) {
         await Printing.sharePdf(
-          bytes: pdfBytes,
-          filename: 'Dept_Report_$formattedDate.pdf',
-        );
+            bytes: pdfBytes, filename: 'Dept_Report_${days}days.pdf');
       } else {
         await Printing.layoutPdf(
-          onLayout: (format) async => pdfBytes,
-          name: 'Dept_Report_$formattedDate',
-        );
+            onLayout: (format) async => pdfBytes,
+            name: 'Dept_Report_${days}days');
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("PDF Error: $e")),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text("PDF Error: $e")));
       }
     } finally {
       if (mounted) setState(() => isExporting = false);
     }
   }
 
-  // ================= ✅ MONITORING UI =================
+  // ✅ EXPORT OPTIONS UI
+  void _showExportOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Export PDF Report",
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            const SizedBox(height: 15),
+            _exportOptionTile("Past 24 Hours", Icons.today, 1),
+            _exportOptionTile("Past 1 Week", Icons.date_range, 7),
+            _exportOptionTile("Past 1 Month", Icons.calendar_month, 30),
+            _exportOptionTile("Past 2 Months", Icons.history, 60),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _exportOptionTile(String title, IconData icon, int days) {
+    return ListTile(
+      leading: Icon(icon, color: AppColors.accentTeal),
+      title: Text(title),
+      onTap: () {
+        Navigator.pop(context);
+        exportPDF(days);
+      },
+    );
+  }
+
+  // ================= ✅ MONITORING UI (KEEP FEATURES) =================
   Widget _buildMonitoringCategory(String title, String role) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -479,7 +542,7 @@ class _HodDashboardState extends State<HodDashboard> {
               : IconButton(
                   icon: const Icon(Icons.picture_as_pdf_outlined,
                       color: Colors.black87),
-                  onPressed: exportMonthlyPDF),
+                  onPressed: _showExportOptions),
           _buildChatIcon(),
           const SizedBox(width: 8),
         ],

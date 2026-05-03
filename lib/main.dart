@@ -6,6 +6,10 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 
 // Screens
 import 'login_screen.dart';
+import 'hod_dashboard.dart';
+import 'pg_dashboard.dart';
+import 'faculty_dashboard.dart';
+import 'opd_entry_dashboard.dart';
 
 // Notifications
 import 'notification_service.dart';
@@ -14,7 +18,7 @@ import 'notification_service.dart';
 import 'firebase_options.dart';
 
 // ==========================================================
-// 🔥 Background handler (ONLY Android will use it)
+// 🔥 Background handler (ONLY Android)
 // ==========================================================
 @pragma('vm:entry-point')
 Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
@@ -35,7 +39,6 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    // ✅ Only Android uses background messaging
     if (Platform.isAndroid) {
       FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
     }
@@ -68,12 +71,13 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
 
-    // ✅ Only run notifications on Android
+    // ✅ AUTO-LOGIN REMOVED: No more _loadUserSession() call here.
+
+    // ✅ Notification logic (Android Only) - Kept active
     if (Platform.isAndroid) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         try {
           await NotificationService().init();
-
           await _setupFCM();
 
           if (!_isFCMInitialized) {
@@ -87,35 +91,28 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  // ================= 🔔 ANDROID ONLY =================
+  // ================= 🔔 ANDROID ONLY FCM SETUP =================
   Future<void> _setupFCM() async {
     if (!Platform.isAndroid) return;
 
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // Request permission (safe for Android)
     await messaging.requestPermission();
-
-    // Enable FCM
     await messaging.setAutoInitEnabled(true);
 
-    // Get token
     String? token = await messaging.getToken();
     debugPrint("🔥 FCM TOKEN: $token");
 
-    // Foreground settings
     await messaging.setForegroundNotificationPresentationOptions(
       alert: true,
       badge: true,
       sound: true,
     );
 
-    // Token refresh
     FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
       debugPrint("🔄 Token Refreshed: $newToken");
     });
 
-    // Foreground messages
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       debugPrint("🔔 Message: ${message.notification?.title}");
 
@@ -128,12 +125,10 @@ class _MyAppState extends State<MyApp> {
       }
     });
 
-    // Background open
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint("📲 Opened from notification");
     });
 
-    // Terminated state
     RemoteMessage? initialMessage = await messaging.getInitialMessage();
     if (initialMessage != null) {
       debugPrint("🚀 Opened from terminated state");
@@ -166,6 +161,9 @@ class _MyAppState extends State<MyApp> {
           ),
         ),
       ),
+
+      // ✅ FIXED: Hardcoded LoginScreen as the entry point.
+      // No checks, no "Restoring Session" spinner, no auto-login.
       home: const LoginScreen(),
     );
   }

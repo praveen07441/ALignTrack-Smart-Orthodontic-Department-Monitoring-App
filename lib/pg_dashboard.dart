@@ -42,6 +42,12 @@ class _PgDashboardState extends State<PgDashboard> {
 
   String get formattedDate => DateFormat('yyyy-MM-dd').format(selectedDate);
 
+  // Helper: Prevents PDF crashes by limiting text length
+  String safeText(String? text, {int limit = 60}) {
+    if (text == null || text.isEmpty) return "-";
+    return text.length > limit ? "${text.substring(0, limit)}..." : text;
+  }
+
   // ================= ✅ OPTIMIZED MARK AS SEEN =================
   Future<void> _markMessagesAsSeen() async {
     try {
@@ -132,7 +138,7 @@ class _PgDashboardState extends State<PgDashboard> {
     }
   }
 
-  // ================= ✅ OPTIMIZED CHAT BADGE COUNTER =================
+  // ================= ✅ CHAT BADGE COUNTER =================
   Widget _buildChatIcon() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -204,13 +210,14 @@ class _PgDashboardState extends State<PgDashboard> {
     );
   }
 
-  // ================= ✅ PDF EXPORT LOGIC (FIXED FOR iOS) =================
-  Future<void> _exportMonthlyPGPDF() async {
+  // ================= ✅ STABLE PDF EXPORT (iOS SAFE) =================
+  Future<void> exportPGPDF(int days) async {
     setState(() => isExporting = true);
+
     try {
       final pdf = pw.Document();
       DateTime endDate = selectedDate;
-      DateTime startDate = endDate.subtract(const Duration(days: 30));
+      DateTime startDate = endDate.subtract(Duration(days: days));
 
       final snapshot = await FirebaseFirestore.instance
           .collection('department_entries')
@@ -223,107 +230,188 @@ class _PgDashboardState extends State<PgDashboard> {
 
       if (snapshot.docs.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text("No clinical records found for this period.")));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("No records found for this period.")),
+          );
         }
         return;
       }
 
       List<List<String>> rows = [];
-      int serialNo = 1;
+      bool isTrimmed = false;
+      int limit = days > 30 ? 300 : 500;
 
       for (var doc in snapshot.docs) {
         final data = doc.data();
         final patients = data['patients'] as List? ?? [];
         final dateLabel = data['date'] ?? '-';
-        final String time = data['timestamp'] != null
-            ? DateFormat('hh:mm a')
-                .format((data['timestamp'] as Timestamp).toDate())
-            : '-';
 
         for (var p in patients) {
           rows.add([
-            "${serialNo++}",
-            "$dateLabel\n$time",
+            "", // Serial placeholder
+            "$dateLabel",
             data['timeSlot'] ?? '-',
             p['staffName'] ?? '-',
-            "Pt: ${p['patientName']}\nOP: ${p['opNumber']}",
-            p['procedure'] ?? '-'
+            "Pt: ${safeText(p['patientName'])}\nOP: ${safeText(p['opNumber'])}",
+            safeText(p['procedure'], limit: 100)
           ]);
         }
       }
 
-      pdf.addPage(pw.MultiPage(
-          pageFormat: PdfPageFormat.a4.landscape,
-          margin: const pw.EdgeInsets.all(32),
-          header: (context) => pw.Column(children: [
-                pw.Text("PG CLINICAL LOG PERFORMANCE REPORT",
-                    style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 18,
-                        color: PdfColors.teal900)),
-                pw.Text("Student: ${widget.userName}",
-                    style: const pw.TextStyle(fontSize: 12)),
-                pw.Text(
-                    "Period: ${DateFormat('dd MMM').format(startDate)} to ${DateFormat('dd MMM yyyy').format(endDate)}",
-                    style: const pw.TextStyle(
-                        fontSize: 10, color: PdfColors.grey700)),
-                pw.SizedBox(height: 10),
-                pw.Divider(thickness: 1, color: PdfColors.teal),
-              ]),
-          build: (context) => [
-                pw.SizedBox(height: 10),
-                pw.TableHelper.fromTextArray(
-                  headers: [
-                    "S.No",
-                    "Date/Time",
-                    "Slot",
-                    "Staff",
-                    "Patient Info",
-                    "Procedure Detail"
-                  ],
-                  data: rows,
-                  headerStyle: pw.TextStyle(
-                      color: PdfColors.white,
-                      fontWeight: pw.FontWeight.bold,
-                      fontSize: 10),
-                  headerDecoration:
-                      const pw.BoxDecoration(color: PdfColors.teal900),
-                  cellStyle: const pw.TextStyle(fontSize: 9),
-                  columnWidths: {
-                    0: const pw.FixedColumnWidth(35),
-                    1: const pw.FixedColumnWidth(85),
-                    2: const pw.FixedColumnWidth(100),
-                    3: const pw.FixedColumnWidth(100),
-                    4: const pw.FixedColumnWidth(150),
-                    5: const pw.FixedColumnWidth(250),
-                  },
-                  cellPadding: const pw.EdgeInsets.all(6),
-                  border:
-                      pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-                ),
-              ],
-          footer: (context) => pw.Container(
-                alignment: pw.Alignment.centerRight,
-                padding: const pw.EdgeInsets.only(top: 20),
-                child: pw.Text(
-                    "Page ${context.pageNumber} | Clinical Monitoring App",
-                    style: const pw.TextStyle(
-                        fontSize: 8, color: PdfColors.grey600)),
-              )));
+      // ✅ SORT (Latest first) with Fallback (Improvement 1)
+      rows.sort((a, b) {
+        try {
+          DateTime d1 = DateFormat('yyyy-MM-dd').parse(a[1]);
+          DateTime d2 = DateFormat('yyyy-MM-dd').parse(b[1]);
+          return d2.compareTo(d1);
+        } catch (_) {
+          return 1; // Pushes invalid dates to bottom
+        }
+      });
 
-      // ✅ FIX: Save bytes first to prevent iOS Layout errors
+      // ✅ ADAPTIVE LIMIT
+      if (rows.length > limit) {
+        rows = rows.take(limit).toList();
+        isTrimmed = true;
+      }
+
+      // ✅ SERIAL NUMBERS AFTER SORT
+      for (int i = 0; i < rows.length; i++) {
+        rows[i][0] = "${i + 1}";
+      }
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.all(24),
+          header: (context) => pw.Column(children: [
+            pw.Text("PG CLINICAL LOG REPORT",
+                style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 16,
+                    color: PdfColors.teal900)),
+            pw.Text("Student: ${widget.userName}",
+                style: const pw.TextStyle(fontSize: 10)),
+            pw.Text(
+              "${DateFormat('dd MMM yyyy').format(startDate)} → ${DateFormat('dd MMM yyyy').format(endDate)}",
+              style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+            ),
+            if (isTrimmed)
+              pw.Text("(Showing latest $limit records for stability)",
+                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.red)),
+            pw.SizedBox(height: 5),
+            pw.Divider(thickness: 1, color: PdfColors.teal900),
+          ]),
+          build: (context) => [
+            pw.Table.fromTextArray(
+              headers: [
+                "S.No",
+                "Date",
+                "Slot",
+                "Staff",
+                "Patient Info",
+                "Procedure Detail"
+              ],
+              data: rows,
+              headerStyle: pw.TextStyle(
+                  color: PdfColors.white,
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 9),
+              headerDecoration:
+                  const pw.BoxDecoration(color: PdfColors.teal900),
+              cellStyle: const pw.TextStyle(fontSize: 8),
+              cellHeight: 22, // Critical for TooManyPagesException
+              columnWidths: {
+                0: const pw.FixedColumnWidth(25),
+                1: const pw.FixedColumnWidth(60),
+                2: const pw.FixedColumnWidth(90),
+                3: const pw.FixedColumnWidth(90),
+                4: const pw.FixedColumnWidth(130),
+                5: const pw.FixedColumnWidth(180),
+              },
+            )
+          ],
+          footer: (context) => pw.Container(
+              alignment: pw.Alignment.centerRight,
+              padding: const pw.EdgeInsets.only(top: 10),
+              child: pw.Text(
+                  "Page ${context.pageNumber} of ${context.pagesCount}",
+                  style: const pw.TextStyle(
+                      fontSize: 8, color: PdfColors.grey600))),
+        ),
+      );
+
       final pdfBytes = await pdf.save();
 
-      await Printing.layoutPdf(
-          onLayout: (format) async => pdfBytes, name: 'PG_Clinical_Log_Report');
+      // ✅ PLATFORM-AWARE EXPORT
+      if (Platform.isIOS) {
+        await Printing.sharePdf(
+            bytes: pdfBytes, filename: 'PG_Report_${days}days.pdf');
+      } else {
+        await Printing.layoutPdf(
+            onLayout: (format) async => pdfBytes,
+            name: 'PG_Report_${days}days');
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text("PDF Error: $e")));
+      }
     } finally {
       if (mounted) setState(() => isExporting = false);
     }
+  }
+
+  // ✅ EXPORT OPTIONS UI
+  void _showExportOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 15),
+          const Text("Select Export Range",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.today, color: AppColors.accentTeal),
+            title: const Text("Today"),
+            onTap: () {
+              Navigator.pop(context);
+              exportPGPDF(1);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.date_range, color: AppColors.accentTeal),
+            title: const Text("Past 1 Week"),
+            onTap: () {
+              Navigator.pop(context);
+              exportPGPDF(7);
+            },
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.calendar_month, color: AppColors.accentTeal),
+            title: const Text("Past 1 Month"),
+            onTap: () {
+              Navigator.pop(context);
+              exportPGPDF(30);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.history, color: AppColors.accentTeal),
+            title: const Text("Past 2 Months"),
+            onTap: () {
+              Navigator.pop(context);
+              exportPGPDF(60);
+            },
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
   }
 
   @override
@@ -349,7 +437,7 @@ class _PgDashboardState extends State<PgDashboard> {
               : IconButton(
                   icon: const Icon(Icons.picture_as_pdf_outlined,
                       color: Colors.black),
-                  onPressed: _exportMonthlyPGPDF),
+                  onPressed: _showExportOptions),
           _buildChatIcon(),
         ],
       ),
@@ -546,6 +634,7 @@ class _PgDashboardState extends State<PgDashboard> {
                 var data = doc.data() as Map<String, dynamic>;
                 return CheckboxListTile(
                   value: data['status'] == 'completed',
+                  activeColor: AppColors.accentTeal,
                   title: Text(data['title'],
                       style: TextStyle(
                           decoration: data['status'] == 'completed'
@@ -565,7 +654,7 @@ class _PgDashboardState extends State<PgDashboard> {
   }
 }
 
-// ================= ENTRY SCREEN (Features Preserved) =================
+// ================= ENTRY SCREEN =================
 class EntryScreen extends StatefulWidget {
   final String userId, userName, slot, role, selectedDate;
   const EntryScreen(
@@ -592,7 +681,9 @@ class _EntryScreenState extends State<EntryScreen> {
   @override
   void dispose() {
     for (var cMap in _controllers) {
-      cMap.values.forEach((controller) => controller.dispose());
+      for (var controller in cMap.values) {
+        controller.dispose();
+      }
     }
     super.dispose();
   }
@@ -679,9 +770,10 @@ class _EntryScreenState extends State<EntryScreen> {
       });
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text("Submission Failed: $e")));
+      }
     } finally {
       if (mounted) setState(() => isLoading = false);
     }

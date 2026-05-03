@@ -14,7 +14,7 @@ dependencies:
   # --- System & Permissions ---
   permission_handler: ^11.3.1
   cupertino_icons: ^1.0.8
-  shared_preferences: ^2.3.2
+  shared_preferences: ^2.5.5
 
   # --- Firebase Services ---
   firebase_core: ^3.10.0

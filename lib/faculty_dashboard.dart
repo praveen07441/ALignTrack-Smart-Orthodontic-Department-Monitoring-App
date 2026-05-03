@@ -7,7 +7,6 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import 'chat_screen.dart';
-import 'notification_service.dart';
 
 class AppColors {
   static const Color primary = Color(0xFFC8E6C9);
@@ -46,11 +45,6 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
   ];
 
   String get formattedDate => DateFormat('yyyy-MM-dd').format(selectedDate);
-
-  @override
-  void initState() {
-    super.initState();
-  }
 
   // ================= ✅ SMART CHAT & BADGE RESET LOGIC =================
   Future<void> _markMessagesAsSeen() async {
@@ -177,13 +171,14 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
     );
   }
 
-  // ================= ✅ PDF EXPORT LOGIC (iOS FIXED) =================
-  Future<void> _exportMonthlyFacultyPDF() async {
+  // ================= ✅ UPGRADED DYNAMIC PDF EXPORT (iOS FIXED) =================
+  Future<void> exportFacultyPDF(int days) async {
     setState(() => isExporting = true);
+
     try {
       final pdf = pw.Document();
       DateTime endDate = selectedDate;
-      DateTime startDate = endDate.subtract(const Duration(days: 30));
+      DateTime startDate = endDate.subtract(Duration(days: days));
 
       final snapshot = await FirebaseFirestore.instance
           .collection('department_entries')
@@ -196,104 +191,186 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
 
       if (snapshot.docs.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text("No work logs found for this 30-day period.")));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text("No records found.")));
         }
         return;
       }
 
       List<List<String>> rows = [];
-      int serialNo = 1;
+      bool isTrimmed = false;
+      int limit = days > 30 ? 300 : 500;
 
       for (var doc in snapshot.docs) {
         final data = doc.data();
-        final workEntries = data['workEntries'] as List? ?? [];
-        final dateLabel = data['date'] ?? '-';
+        final entries = data['workEntries'] as List? ?? [];
         final String time = data['timestamp'] != null
             ? DateFormat('hh:mm a')
                 .format((data['timestamp'] as Timestamp).toDate())
             : '-';
 
-        for (var entry in workEntries) {
+        for (var e in entries) {
           rows.add([
-            "${serialNo++}",
-            "$dateLabel\n$time",
+            "", // Serial placeholder
+            "${data['date'] ?? '-'}\n$time",
             data['timeSlot'] ?? '-',
-            entry['category'] ?? '-',
-            entry['details'] ?? '-'
+            e['category'] ?? '-',
+            e['details'] ?? '-',
           ]);
         }
       }
 
-      pdf.addPage(pw.MultiPage(
-          pageFormat: PdfPageFormat.a4.landscape,
-          margin: const pw.EdgeInsets.all(32),
-          header: (context) => pw.Column(children: [
-                pw.Text("FACULTY PERFORMANCE LOG REPORT",
-                    style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 18,
-                        color: PdfColors.teal900)),
-                pw.Text("Faculty: ${widget.userName}",
-                    style: const pw.TextStyle(fontSize: 12)),
-                pw.Text(
-                    "Period: ${DateFormat('dd MMM').format(startDate)} to ${DateFormat('dd MMM yyyy').format(endDate)}",
-                    style: const pw.TextStyle(
-                        fontSize: 10, color: PdfColors.grey700)),
-                pw.SizedBox(height: 10),
-                pw.Divider(thickness: 1, color: PdfColors.teal),
-              ]),
-          build: (context) => [
-                pw.SizedBox(height: 10),
-                pw.TableHelper.fromTextArray(
-                  headers: [
-                    "S.No",
-                    "Date/Time",
-                    "Time Slot",
-                    "Category",
-                    "Work Details"
-                  ],
-                  data: rows,
-                  headerStyle: pw.TextStyle(
-                      color: PdfColors.white,
-                      fontWeight: pw.FontWeight.bold,
-                      fontSize: 10),
-                  headerDecoration:
-                      const pw.BoxDecoration(color: PdfColors.teal900),
-                  cellStyle: const pw.TextStyle(fontSize: 9),
-                  columnWidths: {
-                    0: const pw.FixedColumnWidth(35),
-                    1: const pw.FixedColumnWidth(85),
-                    2: const pw.FixedColumnWidth(100),
-                    3: const pw.FixedColumnWidth(100),
-                    4: const pw.FixedColumnWidth(280),
-                  },
-                  cellPadding: const pw.EdgeInsets.all(6),
-                  border:
-                      pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-                ),
-              ],
-          footer: (context) => pw.Container(
-                alignment: pw.Alignment.centerRight,
-                padding: const pw.EdgeInsets.only(top: 20),
-                child: pw.Text(
-                    "Page ${context.pageNumber} | Clinical Monitoring App",
-                    style: const pw.TextStyle(
-                        fontSize: 8, color: PdfColors.grey600)),
-              )));
+      // ✅ SORT (Latest First)
+      rows.sort((a, b) {
+        try {
+          DateTime d1 = DateFormat('yyyy-MM-dd').parse(a[1].split('\n')[0]);
+          DateTime d2 = DateFormat('yyyy-MM-dd').parse(b[1].split('\n')[0]);
+          return d2.compareTo(d1);
+        } catch (_) {
+          return 1;
+        }
+      });
 
-      // ✅ FIXED: Pre-save bytes to variable for iOS compatibility
+      // ✅ ADAPTIVE LIMIT
+      if (rows.length > limit) {
+        rows = rows.take(limit).toList();
+        isTrimmed = true;
+      }
+
+      // ✅ RE-ASSIGN SERIAL NUMBERS
+      for (int i = 0; i < rows.length; i++) {
+        rows[i][0] = "${i + 1}";
+      }
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.all(24),
+          header: (context) => pw.Column(children: [
+            pw.Text("FACULTY PERFORMANCE REPORT",
+                style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 16,
+                    color: PdfColors.teal900)),
+            pw.Text("Faculty: ${widget.userName}",
+                style: const pw.TextStyle(fontSize: 10)),
+            pw.Text(
+              "${DateFormat('dd MMM yyyy').format(startDate)} → ${DateFormat('dd MMM yyyy').format(endDate)}",
+              style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+            ),
+            if (isTrimmed)
+              pw.Text("(Showing latest $limit records for stability)",
+                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.red)),
+            pw.Divider(thickness: 1, color: PdfColors.teal900),
+          ]),
+          build: (context) => [
+            pw.Table.fromTextArray(
+              headers: [
+                "S.No",
+                "Date/Time",
+                "Slot",
+                "Category",
+                "Work Details"
+              ],
+              data: rows,
+              headerStyle: pw.TextStyle(
+                  color: PdfColors.white,
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 9),
+              headerDecoration:
+                  const pw.BoxDecoration(color: PdfColors.teal900),
+              cellStyle: const pw.TextStyle(fontSize: 8),
+              cellHeight: 22, // Critical to prevent TooManyPagesException
+              columnWidths: {
+                0: const pw.FixedColumnWidth(25),
+                1: const pw.FixedColumnWidth(65),
+                2: const pw.FixedColumnWidth(90),
+                3: const pw.FixedColumnWidth(90),
+                4: const pw.FixedColumnWidth(280),
+              },
+            ),
+          ],
+          footer: (context) => pw.Container(
+              alignment: pw.Alignment.centerRight,
+              padding: const pw.EdgeInsets.only(top: 10),
+              child: pw.Text(
+                  "Page ${context.pageNumber} of ${context.pagesCount}",
+                  style: const pw.TextStyle(
+                      fontSize: 8, color: PdfColors.grey600))),
+        ),
+      );
+
       final pdfBytes = await pdf.save();
 
-      await Printing.layoutPdf(
-          onLayout: (format) async => pdfBytes, name: 'Faculty_Monthly_Log');
+      // ✅ CROSS-PLATFORM EXPORT (iOS SAFE)
+      if (Platform.isIOS) {
+        await Printing.sharePdf(
+            bytes: pdfBytes, filename: 'Faculty_Report_${days}days.pdf');
+      } else {
+        await Printing.layoutPdf(
+            onLayout: (format) async => pdfBytes,
+            name: 'Faculty_Report_${days}days');
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text("PDF Error: $e")));
+      }
     } finally {
       if (mounted) setState(() => isExporting = false);
     }
+  }
+
+  // ✅ EXPORT OPTIONS UI
+  void _showExportOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 15),
+          const Text("Export Work Logs",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.today, color: AppColors.accentTeal),
+            title: const Text("Today"),
+            onTap: () {
+              Navigator.pop(context);
+              exportFacultyPDF(1);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.date_range, color: AppColors.accentTeal),
+            title: const Text("Past 1 Week"),
+            onTap: () {
+              Navigator.pop(context);
+              exportFacultyPDF(7);
+            },
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.calendar_month, color: AppColors.accentTeal),
+            title: const Text("Past 1 Month"),
+            onTap: () {
+              Navigator.pop(context);
+              exportFacultyPDF(30);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.history, color: AppColors.accentTeal),
+            title: const Text("Past 2 Months"),
+            onTap: () {
+              Navigator.pop(context);
+              exportFacultyPDF(60);
+            },
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
   }
 
   @override
@@ -319,7 +396,7 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
               : IconButton(
                   icon: const Icon(Icons.picture_as_pdf_outlined,
                       color: Colors.black),
-                  onPressed: _exportMonthlyFacultyPDF),
+                  onPressed: _showExportOptions),
           _buildChatIcon(),
         ],
       ),
@@ -507,10 +584,11 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
               .where('date', isEqualTo: formattedDate)
               .snapshots(),
           builder: (context, snapshot) {
-            if (!snapshot.hasData || snapshot.data!.docs.isEmpty)
+            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
               return const Center(
                   child: Text("No reminders for today",
                       style: TextStyle(color: Colors.grey, fontSize: 12)));
+            }
             return ListView(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -519,6 +597,7 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
                 bool isDone = data['status'] == 'completed';
                 return CheckboxListTile(
                   value: isDone,
+                  activeColor: AppColors.accentTeal,
                   title: Text(data['title'],
                       style: TextStyle(
                           decoration:
@@ -537,7 +616,7 @@ class _FacultyDashboardState extends State<FacultyDashboard> {
   }
 }
 
-// ================= FACULTY ENTRY SCREEN (Features Preserved) =================
+// ================= FACULTY ENTRY SCREEN =================
 class FacultyEntryScreen extends StatefulWidget {
   final String userId, userName, slot, date;
   const FacultyEntryScreen(
@@ -582,16 +661,21 @@ class _FacultyEntryScreenState extends State<FacultyEntryScreen> {
   }
 
   Future<void> _submit() async {
+    if (_entries
+        .any((e) => e['category'] == null || e['controller'].text.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Please complete all entries before submitting.")));
+      return;
+    }
+
     setState(() => isLoading = true);
     try {
       List workData = _entries
           .map((e) => {
                 "category": e['category'],
-                "details":
-                    (e['controller'] as TextEditingController).text.trim()
+                "details": e['controller'].text.trim()
               })
           .toList();
-
       await FirebaseFirestore.instance.collection('department_entries').add({
         "userId": widget.userId,
         "userName": widget.userName,

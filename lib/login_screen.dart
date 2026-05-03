@@ -1,4 +1,4 @@
-import 'dart:io'; // ✅ Added to handle platform-specific logic
+import 'dart:io'; // ✅ Handles platform-specific logic
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -108,17 +108,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
       User user = userCredential.user!;
 
-      // 🔔 SAVE FCM TOKEN (Optimized for iOS/Android compatibility)
-      // Only runs on Android to avoid APNs/Permission errors on iOS login
+      // 🔔 SAVE FCM TOKEN (Android specific to avoid APNs overhead)
       if (Platform.isAndroid) {
         String? fcmToken = await FirebaseMessaging.instance.getToken();
         if (fcmToken != null) {
           await FirebaseFirestore.instance
               .collection('users')
               .doc(user.uid)
-              .set({
-            'fcmToken': fcmToken,
-          }, SetOptions(merge: true));
+              .set({'fcmToken': fcmToken}, SetOptions(merge: true));
         }
       }
 
@@ -143,9 +140,16 @@ class _LoginScreenState extends State<LoginScreen> {
             "Access denied: You are not registered as $selectedRole");
       }
 
+      // ✅ 4. SAVE SESSION (CRITICAL FIX)
+      // This ensures the app remembers the user upon restart.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('userId', user.uid);
+      await prefs.setString('role', role);
+      await prefs.setString('userName', name);
+
       if (!mounted) return;
 
-      // 4. Clean Navigation to Dashboards
+      // 5. Navigation to Dashboards
       Widget targetPage;
       if (role == "PG") {
         targetPage = PgDashboard(userId: user.uid, userName: name);

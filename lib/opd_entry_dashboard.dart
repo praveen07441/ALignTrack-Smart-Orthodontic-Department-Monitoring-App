@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:pdf/pdf.dart';
@@ -46,7 +47,6 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
 
   @override
   void dispose() {
-    // CLEANUP: Dispose all dynamic controllers to prevent memory leaks
     for (var group in _controllers) {
       group.values.forEach((controller) => controller.dispose());
     }
@@ -182,13 +182,14 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
     );
   }
 
-  // ================= ✅ PREMIUM 1 MONTH PDF EXPORT (iOS FIXED) =================
-  Future<void> _exportMonthlyOPDPDF() async {
+  // ================= ✅ UPGRADED DYNAMIC PDF EXPORT (iOS SAFE) =================
+  Future<void> exportOPDPDF(int days) async {
     setState(() => isExporting = true);
+
     try {
       final pdf = pw.Document();
       DateTime endDate = selectedDate;
-      DateTime startDate = endDate.subtract(const Duration(days: 30));
+      DateTime startDate = endDate.subtract(Duration(days: days));
 
       final snapshot = await FirebaseFirestore.instance
           .collection('department_entries')
@@ -202,23 +203,25 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
       if (snapshot.docs.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("No records for this period.")));
+            const SnackBar(content: Text("No records found.")),
+          );
         }
         return;
       }
 
       List<List<String>> rows = [];
-      int serialNo = 1;
+      bool isTrimmed = false;
+      int limit = days > 30 ? 300 : 500;
 
       for (var doc in snapshot.docs) {
         final data = doc.data();
-        final String time = data['timestamp'] != null
+        final time = data['timestamp'] != null
             ? DateFormat('hh:mm a')
                 .format((data['timestamp'] as Timestamp).toDate())
             : '-';
 
         rows.add([
-          "${serialNo++}",
+          "", // Placeholder for serial
           "${data['date'] ?? '-'}\n$time",
           data['opNumber'] ?? '-',
           data['patientName'] ?? '-',
@@ -227,69 +230,159 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
         ]);
       }
 
-      pdf.addPage(pw.MultiPage(
-          pageFormat: PdfPageFormat.a4.landscape,
-          margin: const pw.EdgeInsets.all(32),
-          header: (context) => pw.Column(children: [
-                pw.Text("OPD REGISTRATION REPORT",
-                    style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 18,
-                        color: PdfColors.teal900)),
-                pw.Text("Registrar: ${widget.userName}",
-                    style: const pw.TextStyle(fontSize: 12)),
-                pw.Text(
-                    "Period: ${DateFormat('dd MMM').format(startDate)} to ${DateFormat('dd MMM yyyy').format(endDate)}",
-                    style: const pw.TextStyle(
-                        fontSize: 10, color: PdfColors.grey700)),
-                pw.SizedBox(height: 10),
-                pw.Divider(thickness: 1, color: PdfColors.teal),
-              ]),
-          build: (context) => [
-                pw.SizedBox(height: 10),
-                pw.TableHelper.fromTextArray(
-                  headers: [
-                    "S.No",
-                    "Date/Time",
-                    "OP No",
-                    "Patient Name",
-                    "Assigned PG",
-                    "Clinical Details"
-                  ],
-                  data: rows,
-                  headerStyle: pw.TextStyle(
-                      color: PdfColors.white,
-                      fontWeight: pw.FontWeight.bold,
-                      fontSize: 9),
-                  headerDecoration:
-                      const pw.BoxDecoration(color: PdfColors.teal900),
-                  cellStyle: const pw.TextStyle(fontSize: 8),
-                  columnWidths: {
-                    0: const pw.FixedColumnWidth(35),
-                    1: const pw.FixedColumnWidth(80),
-                    2: const pw.FixedColumnWidth(60),
-                    3: const pw.FixedColumnWidth(100),
-                    4: const pw.FixedColumnWidth(100),
-                    5: const pw.FixedColumnWidth(250),
-                  },
-                  cellPadding: const pw.EdgeInsets.all(6),
-                  border:
-                      pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-                ),
-              ]));
+      // ✅ SORTING
+      rows.sort((a, b) {
+        try {
+          DateTime d1 = DateFormat('yyyy-MM-dd').parse(a[1].split('\n')[0]);
+          DateTime d2 = DateFormat('yyyy-MM-dd').parse(b[1].split('\n')[0]);
+          return d2.compareTo(d1);
+        } catch (_) {
+          return 1;
+        }
+      });
 
-      // ✅ FINAL FIX: Pre-save bytes to variable for iOS compatibility
+      // ✅ LIMITING
+      if (rows.length > limit) {
+        rows = rows.take(limit).toList();
+        isTrimmed = true;
+      }
+
+      // ✅ SERIAL NUMBERING
+      for (int i = 0; i < rows.length; i++) {
+        rows[i][0] = "${i + 1}";
+      }
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.all(24),
+          header: (context) => pw.Column(children: [
+            pw.Text("OPD REGISTRATION REPORT",
+                style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 16,
+                    color: PdfColors.teal900)),
+            pw.Text("Registrar: ${widget.userName}",
+                style: const pw.TextStyle(fontSize: 10)),
+            pw.Text(
+              "${DateFormat('dd MMM yyyy').format(startDate)} → ${DateFormat('dd MMM yyyy').format(endDate)}",
+              style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+            ),
+            if (isTrimmed)
+              pw.Text("(Showing latest $limit records for stability)",
+                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.red)),
+            pw.Divider(thickness: 1, color: PdfColors.teal900),
+          ]),
+          build: (context) => [
+            pw.Table.fromTextArray(
+              headers: [
+                "S.No",
+                "Date/Time",
+                "OP No",
+                "Patient Name",
+                "Assigned PG",
+                "Clinical Details"
+              ],
+              data: rows,
+              headerStyle: pw.TextStyle(
+                  color: PdfColors.white,
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 9),
+              headerDecoration:
+                  const pw.BoxDecoration(color: PdfColors.teal900),
+              cellStyle: const pw.TextStyle(fontSize: 8),
+              cellHeight: 22, // Critical for TooManyPagesException
+              columnWidths: {
+                0: const pw.FixedColumnWidth(30),
+                1: const pw.FixedColumnWidth(70),
+                2: const pw.FixedColumnWidth(60),
+                3: const pw.FixedColumnWidth(110),
+                4: const pw.FixedColumnWidth(110),
+                5: const pw.FixedColumnWidth(220),
+              },
+            ),
+          ],
+          footer: (context) => pw.Container(
+              alignment: pw.Alignment.centerRight,
+              padding: const pw.EdgeInsets.only(top: 10),
+              child: pw.Text(
+                  "Page ${context.pageNumber} of ${context.pagesCount}",
+                  style: const pw.TextStyle(
+                      fontSize: 8, color: PdfColors.grey600))),
+        ),
+      );
+
       final pdfBytes = await pdf.save();
 
-      await Printing.layoutPdf(
-          onLayout: (format) async => pdfBytes, name: 'OPD_Report');
+      // ✅ CROSS-PLATFORM EXPORT FIX
+      if (Platform.isIOS) {
+        await Printing.sharePdf(
+            bytes: pdfBytes, filename: 'OPD_Report_${days}days.pdf');
+      } else {
+        await Printing.layoutPdf(
+            onLayout: (format) async => pdfBytes,
+            name: 'OPD_Report_${days}days');
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text("PDF Error: $e")));
+      }
     } finally {
       if (mounted) setState(() => isExporting = false);
     }
+  }
+
+  // ✅ EXPORT OPTIONS UI
+  void _showExportOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 15),
+          const Text("Export PDF Report",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.today, color: AppColors.accentTeal),
+            title: const Text("Today's Entries"),
+            onTap: () {
+              Navigator.pop(context);
+              exportOPDPDF(1);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.date_range, color: AppColors.accentTeal),
+            title: const Text("Past 1 Week"),
+            onTap: () {
+              Navigator.pop(context);
+              exportOPDPDF(7);
+            },
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.calendar_month, color: AppColors.accentTeal),
+            title: const Text("Past 1 Month"),
+            onTap: () {
+              Navigator.pop(context);
+              exportOPDPDF(30);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.history, color: AppColors.accentTeal),
+            title: const Text("Past 2 Months"),
+            onTap: () {
+              Navigator.pop(context);
+              exportOPDPDF(60);
+            },
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
   }
 
   Future<void> _validateAndSubmit() async {
@@ -361,8 +454,9 @@ class _OpdEntryDashboardState extends State<OpdEntryDashboard> {
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: Colors.black)))
               : IconButton(
-                  icon: const Icon(Icons.picture_as_pdf, color: Colors.black),
-                  onPressed: _exportMonthlyOPDPDF),
+                  icon: const Icon(Icons.picture_as_pdf_outlined,
+                      color: Colors.black),
+                  onPressed: _showExportOptions),
           _buildChatIcon(),
         ],
       ),
